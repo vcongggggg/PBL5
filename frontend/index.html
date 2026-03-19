@@ -1,0 +1,197 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="UTF-8" />
+    <title>PBL5 Smart Parking Dashboard</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
+    />
+    <style>
+      body {
+        background: radial-gradient(circle at top left, #152642, #050910);
+        color: #f5f7ff;
+      }
+      main {
+        max-width: 1200px;
+        margin: 2rem auto;
+      }
+      .card {
+        background: rgba(15, 23, 42, 0.9);
+        border-radius: 16px;
+        padding: 1.5rem;
+        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        backdrop-filter: blur(12px);
+      }
+      .stats {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+        gap: 1rem;
+      }
+      .stat-card {
+        border-radius: 12px;
+        padding: 1rem;
+        background: linear-gradient(135deg, #1d293b, #020617);
+      }
+      .stat-label {
+        font-size: 0.9rem;
+        color: #9ca3af;
+      }
+      .stat-value {
+        font-size: 1.8rem;
+        font-weight: 700;
+        margin-top: 0.2rem;
+      }
+      table {
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <header style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+          <div>
+            <h1 style="margin-bottom: 0.25rem">PBL5 Smart Parking</h1>
+            <p style="margin: 0; color: #9ca3af">
+              Dashboard quản lý bãi xe – demo kết nối với API FastAPI.
+            </p>
+          </div>
+          <button id="refreshBtn">Làm mới dữ liệu</button>
+        </header>
+        <hr />
+
+        <section>
+          <h3>Thống kê nhanh</h3>
+          <div class="stats" id="stats">
+            <article class="stat-card">
+              <div class="stat-label">Xe đang trong bãi</div>
+              <div class="stat-value" id="statInBay">-</div>
+            </article>
+            <article class="stat-card">
+              <div class="stat-label">Lượt vào hôm nay</div>
+              <div class="stat-value" id="statInToday">-</div>
+            </article>
+            <article class="stat-card">
+              <div class="stat-label">Lượt ra hôm nay</div>
+              <div class="stat-value" id="statOutToday">-</div>
+            </article>
+            <article class="stat-card">
+              <div class="stat-label">Doanh thu hôm nay (VND)</div>
+              <div class="stat-value" id="statRevenue">-</div>
+            </article>
+          </div>
+        </section>
+
+        <section style="margin-top: 2rem">
+          <h3>Danh sách xe vé tháng</h3>
+          <form id="vehicleForm" style="margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem">
+            <input id="plate" placeholder="Biển số (VD: 51F-123.45)" required />
+            <input id="owner" placeholder="Tên chủ xe" />
+            <input id="phone" placeholder="Số điện thoại" />
+            <input id="note" placeholder="Ghi chú" />
+            <button type="submit">Thêm xe</button>
+          </form>
+
+          <div style="overflow-x: auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Biển số</th>
+                  <th>Chủ xe</th>
+                  <th>SĐT</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody id="vehicleTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script>
+      const API_BASE = "http://localhost:8000";
+
+      async function fetchDashboard() {
+        try {
+          const res = await fetch(API_BASE + "/api/dashboard");
+          if (!res.ok) throw new Error("HTTP " + res.status);
+          const data = await res.json();
+          document.getElementById("statInBay").textContent = data.total_in_bay;
+          document.getElementById("statInToday").textContent = data.today_total_in;
+          document.getElementById("statOutToday").textContent = data.today_total_out;
+          document.getElementById("statRevenue").textContent = data.today_revenue.toLocaleString("vi-VN");
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function fetchVehicles() {
+        try {
+          const res = await fetch(API_BASE + "/api/vehicles");
+          const vehicles = await res.json();
+          const tbody = document.getElementById("vehicleTableBody");
+          tbody.innerHTML = "";
+          vehicles.forEach((v) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${v.id}</td>
+              <td>${v.plate_number}</td>
+              <td>${v.owner_name || ""}</td>
+              <td>${v.phone || ""}</td>
+              <td>${v.note || ""}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function createVehicle(evt) {
+        evt.preventDefault();
+        const plate = document.getElementById("plate").value.trim();
+        const owner = document.getElementById("owner").value.trim();
+        const phone = document.getElementById("phone").value.trim();
+        const note = document.getElementById("note").value.trim();
+        if (!plate) return;
+
+        try {
+          const res = await fetch(API_BASE + "/api/vehicles", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              plate_number: plate,
+              owner_name: owner || null,
+              phone: phone || null,
+              note: note || null,
+            }),
+          });
+          if (!res.ok) {
+            const errData = await res.json();
+            alert("Lỗi: " + (errData.detail || res.status));
+            return;
+          }
+          document.getElementById("vehicleForm").reset();
+          await fetchVehicles();
+        } catch (err) {
+          console.error(err);
+          alert("Không thể kết nối API");
+        }
+      }
+
+      document.getElementById("vehicleForm").addEventListener("submit", createVehicle);
+      document.getElementById("refreshBtn").addEventListener("click", () => {
+        fetchDashboard();
+        fetchVehicles();
+      });
+
+      fetchDashboard();
+      fetchVehicles();
+    </script>
+  </body>
+  </html>
+
