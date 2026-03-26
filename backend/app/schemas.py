@@ -103,3 +103,13 @@ class PlateRecognitionResult(BaseModel):
     confidence: float
 
 
+class ParkingCheckinResponse(BaseModel):
+    action: str
+    plate: str
+    confidence: float
+    valid_plate: bool
+    vehicle_type: str
+    message: str
+    session_id: Optional[int] = None
+
+

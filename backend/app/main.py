@@ -1,13 +1,14 @@
 from datetime import datetime
-from typing import List
+import os
+import uuid
+from typing import List, Optional
 
-from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, status
+from fastapi import Depends, FastAPI, HTTPException, UploadFile, File, Form, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from . import ai_service, models, schemas
 from .database import Base, engine, get_db
 
-# Khởi tạo DB
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="PBL5 Smart Parking API")
@@ -21,6 +22,104 @@ app.add_middleware(
 )
 
 
+def get_system_config_value(db: Session, key: str, default: float) -> float:
+    config = db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
+    if not config:
+        return default
+    try:
+        return float(config.value)
+    except (TypeError, ValueError):
+        return default
+
+
+def save_upload_image(image_bytes: bytes, original_name: Optional[str]) -> Optional[str]:
+    if not image_bytes:
+        return None
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    upload_dir = os.path.join(base_dir, "uploads")
+    os.makedirs(upload_dir, exist_ok=True)
+
+    ext = os.path.splitext(original_name or "")[1].lower()
+    if ext not in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
+        ext = ".jpg"
+
+    filename = f"checkin_{datetime.utcnow().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}{ext}"
+    file_path = os.path.join(upload_dir, filename)
+    with open(file_path, "wb") as f:
+        f.write(image_bytes)
+    return file_path
+
+
+def process_checkin(
+    db: Session,
+    plate: str,
+    confidence: float,
+    direction: str,
+    image_path: Optional[str] = None,
+) -> schemas.ParkingCheckinResponse:
+    now = datetime.utcnow()
+    plate_norm = ai_service.normalize_plate(plate)
+    valid_plate = ai_service.is_valid_vn_plate(plate_norm)
+
+    threshold = get_system_config_value(db, "plate_confidence_threshold", 0.6)
+    action = "open" if (valid_plate and confidence >= threshold) else "ignore"
+
+    vehicle = None
+    if plate_norm:
+        vehicle = (
+            db.query(models.Vehicle)
+            .filter(models.Vehicle.plate_number == plate_norm)
+            .first()
+        )
+
+    vehicle_type = "unknown"
+    message = "Bien so khong hop le"
+
+    if valid_plate:
+        if vehicle:
+            active_sub = (
+                db.query(models.Subscription)
+                .filter(
+                    models.Subscription.vehicle_id == vehicle.id,
+                    models.Subscription.is_active == True,  # noqa: E712
+                    models.Subscription.start_date <= now.date(),
+                    models.Subscription.end_date >= now.date(),
+                )
+                .first()
+            )
+            if active_sub:
+                vehicle_type = "monthly"
+                message = "Xe ve thang, con han"
+            else:
+                vehicle_type = "guest"
+                message = "Xe ve thang, HET han"
+        else:
+            vehicle_type = "guest"
+            message = "Xe khong co trong danh sach"
+
+    session = models.ParkingSession(
+        vehicle_id=vehicle.id if vehicle else None,
+        plate_number=plate_norm or "UNKNOWN",
+        direction=direction,
+        time_in=now,
+        fee=0,
+        image_path=image_path,
+    )
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+
+    return schemas.ParkingCheckinResponse(
+        action=action,
+        plate=plate_norm or "UNKNOWN",
+        confidence=confidence,
+        valid_plate=valid_plate,
+        vehicle_type=vehicle_type,
+        message=message,
+        session_id=session.id,
+    )
+
+
 @app.get("/health")
 def health_check():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
@@ -32,69 +131,28 @@ def handle_esp_event(
     payload: schemas.EspEventRequest, db: Session = Depends(get_db)
 ):
     """
-    Endpoint ESP32 gọi khi cảm biến phát hiện xe.
-    Ở phiên bản demo, logic AI / nhận diện biển số sẽ được giả lập.
+    Endpoint ESP32: nhan su kien xe va xu ly check-in.
     """
-
-    # TODO: tích hợp AI (YOLO + OCR) để đọc biển số thật.
-    # Hiện tại gọi hàm demo trả về biển số giả định.
-    detected_plate, _ = ai_service.recognize_plate_demo()
-
-    # Tìm xe đăng ký vé tháng theo biển số
-    vehicle = (
-        db.query(models.Vehicle)
-        .filter(models.Vehicle.plate_number == detected_plate)
-        .first()
-    )
-
-    vehicle_type = "unknown"
-    message = "Khach vang lai"
-    now = datetime.utcnow()
-
-    if vehicle:
-        # Kiểm tra vé tháng còn hạn
-        active_sub = (
-            db.query(models.Subscription)
-            .filter(
-                models.Subscription.vehicle_id == vehicle.id,
-                models.Subscription.is_active == True,  # noqa: E712
-                models.Subscription.start_date <= now.date(),
-                models.Subscription.end_date >= now.date(),
-            )
-            .first()
-        )
-        if active_sub:
-            vehicle_type = "monthly"
-            message = "Xe ve thang, con han"
-        else:
-            vehicle_type = "guest"
-            message = "Xe ve thang, HET han"
-    else:
-        vehicle_type = "guest"
-        message = "Xe khong co trong danh sach"
-
-    # Tạo bản ghi phiên gửi xe
-    session = models.ParkingSession(
-        vehicle_id=vehicle.id if vehicle else None,
-        plate_number=detected_plate,
+    detected_plate, confidence = ai_service.recognize_plate_demo()
+    result = process_checkin(
+        db=db,
+        plate=detected_plate,
+        confidence=confidence,
         direction=payload.direction,
-        time_in=now,
-        fee=0,
+        image_path=None,
     )
-    db.add(session)
-    db.commit()
 
     return schemas.EspEventResponse(
-        action="open",
-        plate=detected_plate,
-        vehicle_type=vehicle_type,
-        message=message,
+        action=result.action,
+        plate=result.plate,
+        vehicle_type=result.vehicle_type,
+        message=result.message,
     )
 
 
 @app.post("/api/esp/manual-open")
 def handle_manual_open(payload: schemas.ManualOpenRequest):
-    # Ở bản demo chỉ log lại, sau này có thể lưu DB
+    # á»ž báº£n demo chá»‰ log láº¡i, sau nÃ y cÃ³ thá»ƒ lÆ°u DB
     return {
         "status": "ok",
         "device_id": payload.device_id,
@@ -103,17 +161,45 @@ def handle_manual_open(payload: schemas.ManualOpenRequest):
     }
 
 
-# ============ AI – RECOGNIZE PLATE ============
+# ============ AI â€“ RECOGNIZE PLATE ============
 @app.post("/api/ai/recognize-plate", response_model=schemas.PlateRecognitionResult)
 async def recognize_plate_endpoint(file: UploadFile = File(...)):
     """
-    Endpoint để test riêng mô-đun AI:
-    - Nhận 1 file ảnh từ Postman / frontend
-    - Trả về biển số + độ tin cậy
+    Endpoint Ä‘á»ƒ test riÃªng mÃ´-Ä‘un AI:
+    - Nháº­n 1 file áº£nh tá»« Postman / frontend
+    - Tráº£ vá» biá»ƒn sá»‘ + Ä‘á»™ tin cáº­y
     """
     image_bytes = await file.read()
     plate, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
     return schemas.PlateRecognitionResult(plate=plate, confidence=confidence)
+
+
+@app.post("/api/parking/check-in", response_model=schemas.ParkingCheckinResponse)
+async def parking_check_in(
+    file: UploadFile = File(...),
+    direction: str = Form("in"),
+    device_id: Optional[str] = Form(None),
+    db: Session = Depends(get_db),
+):
+    """
+    Check-in tu webcam: nhan anh, nhan dien bien so, luu session.
+    """
+    image_bytes = await file.read()
+    if not image_bytes:
+        raise HTTPException(status_code=400, detail="Empty image")
+
+    plate, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
+    plate = ai_service.normalize_plate(plate)
+    image_path = save_upload_image(image_bytes, file.filename)
+
+    result = process_checkin(
+        db=db,
+        plate=plate,
+        confidence=confidence,
+        direction=direction,
+        image_path=image_path,
+    )
+    return result
 
 
 # ============ CRUD VEHICLE ============
@@ -128,7 +214,7 @@ def create_vehicle(
     )
     if exists:
         raise HTTPException(
-            status_code=400, detail="Biển số đã tồn tại"
+            status_code=400, detail="Biá»ƒn sá»‘ Ä‘Ã£ tá»“n táº¡i"
         )
 
     vehicle = models.Vehicle(**vehicle_in.dict())
@@ -229,10 +315,9 @@ def parking_check_out(
     if not session:
         raise HTTPException(
             status_code=404,
-            detail="Không tìm thấy phiên gửi xe đang mở cho biển số này",
+            detail="Không tìm thấy phiên gửi đang mở cho biển số này",
         )
 
-    # Lấy đơn giá từ SystemConfig, key = price_per_hour, mặc định 5000 VND/giờ
     price_config = (
         db.query(models.SystemConfig)
         .filter(models.SystemConfig.key == "price_per_hour")
@@ -241,13 +326,11 @@ def parking_check_out(
     price_per_hour = float(price_config.value) if price_config else 5000.0
 
     session.time_out = now
-    # Đổi trạng thái lượt thành "out" sau khi check-out thành công
     session.direction = "out"
 
     duration_seconds = (session.time_out - session.time_in).total_seconds()
     duration_hours = max(duration_seconds / 3600.0, 0.0)
 
-    # Tính tiền: làm tròn lên theo giờ
     hours_rounded = int(duration_hours) if duration_hours.is_integer() else int(duration_hours) + 1
     if hours_rounded == 0:
         hours_rounded = 1

@@ -43,6 +43,28 @@
         font-weight: 700;
         margin-top: 0.2rem;
       }
+      .webcam-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+        gap: 1rem;
+        align-items: start;
+      }
+      .webcam-preview {
+        background: #0b1220;
+        border-radius: 12px;
+        padding: 0.75rem;
+      }
+      .webcam-preview video,
+      .webcam-preview canvas {
+        width: 100%;
+        border-radius: 10px;
+        background: #000;
+      }
+      .result-list {
+        display: grid;
+        gap: 0.35rem;
+        font-size: 0.9rem;
+      }
       table {
         font-size: 0.9rem;
       }
@@ -70,11 +92,11 @@
               <div class="stat-value" id="statInBay">-</div>
             </article>
             <article class="stat-card">
-              <div class="stat-label">Lượt vào hôm nay</div>
+              <div class="stat-label">Lượng vào hôm nay</div>
               <div class="stat-value" id="statInToday">-</div>
             </article>
             <article class="stat-card">
-              <div class="stat-label">Lượt ra hôm nay</div>
+              <div class="stat-label">Lượng ra hôm nay</div>
               <div class="stat-value" id="statOutToday">-</div>
             </article>
             <article class="stat-card">
@@ -85,7 +107,35 @@
         </section>
 
         <section style="margin-top: 2rem">
-          <h3>Danh sách xe vé tháng</h3>
+          <h3>Webcam check-in</h3>
+          <div class="webcam-grid">
+            <div class="webcam-preview">
+              <video id="webcamVideo" autoplay playsinline></video>
+              <canvas id="webcamCanvas" width="640" height="480" style="margin-top: 0.75rem"></canvas>
+            </div>
+            <div>
+              <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem">
+                <button type="button" id="startCamBtn">Start camera</button>
+                <button type="button" id="captureBtn">Capture</button>
+                <button type="button" id="recognizeBtn">Recognize</button>
+                <button type="button" id="stopCamBtn" class="secondary">Stop</button>
+              </div>
+              <article class="stat-card">
+                <div class="stat-label">Result</div>
+                <div class="result-list" id="webcamResult">
+                  <div>action: <code>-</code></div>
+                  <div>plate: <code>-</code></div>
+                  <div>confidence: <code>-</code></div>
+                  <div>valid_plate: <code>-</code></div>
+                  <div>vehicle_type: <code>-</code></div>
+                  <div>message: <code>-</code></div>
+                </div>
+              </article>
+            </div>
+          </div>
+        </section>
+        <section style="margin-top: 2rem">
+          <h3>Danh sách xe</h3>
           <form id="vehicleForm" style="margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem">
             <input id="plate" placeholder="Biển số (VD: 51F-123.45)" required />
             <input id="owner" placeholder="Tên chủ xe" />
@@ -114,6 +164,93 @@
 
     <script>
       const API_BASE = "http://localhost:8000";
+      const webcamVideo = document.getElementById("webcamVideo");
+      const webcamCanvas = document.getElementById("webcamCanvas");
+      const webcamResult = document.getElementById("webcamResult");
+      let webcamStream = null;
+      let capturedBlob = null;
+
+      function setWebcamResult(data) {
+        if (!webcamResult) return;
+        const fields = {
+          action: data.action ?? "-",
+          plate: data.plate ?? "-",
+          confidence: data.confidence != null ? Number(data.confidence).toFixed(3) : "-",
+          valid_plate: data.valid_plate != null ? data.valid_plate : "-",
+          vehicle_type: data.vehicle_type ?? "-",
+          message: data.message ?? "-",
+        };
+        webcamResult.innerHTML = `
+          <div>action: <code>${fields.action}</code></div>
+          <div>plate: <code>${fields.plate}</code></div>
+          <div>confidence: <code>${fields.confidence}</code></div>
+          <div>valid_plate: <code>${fields.valid_plate}</code></div>
+          <div>vehicle_type: <code>${fields.vehicle_type}</code></div>
+          <div>message: <code>${fields.message}</code></div>
+        `;
+      }
+
+      async function startCamera() {
+        if (webcamStream) return;
+        try {
+          webcamStream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: "environment" },
+          });
+          webcamVideo.srcObject = webcamStream;
+          await webcamVideo.play();
+        } catch (err) {
+          console.error(err);
+          alert("Cannot access camera");
+        }
+      }
+
+      function stopCamera() {
+        if (!webcamStream) return;
+        webcamStream.getTracks().forEach((track) => track.stop());
+        webcamStream = null;
+      }
+
+      async function captureFrame() {
+        if (!webcamVideo || !webcamCanvas) return;
+        if (!webcamVideo.videoWidth) return;
+        webcamCanvas.width = webcamVideo.videoWidth;
+        webcamCanvas.height = webcamVideo.videoHeight;
+        const ctx = webcamCanvas.getContext("2d");
+        ctx.drawImage(webcamVideo, 0, 0, webcamCanvas.width, webcamCanvas.height);
+        capturedBlob = await new Promise((resolve) =>
+          webcamCanvas.toBlob(resolve, "image/jpeg", 0.9)
+        );
+      }
+
+      async function recognizeFromWebcam() {
+        try {
+          if (!capturedBlob) {
+            await captureFrame();
+          }
+          if (!capturedBlob) {
+            alert("No image captured");
+            return;
+          }
+          const formData = new FormData();
+          formData.append("file", capturedBlob, "capture.jpg");
+          formData.append("direction", "in");
+          formData.append("device_id", "webcam-1");
+
+          const res = await fetch(API_BASE + "/api/parking/check-in", {
+            method: "POST",
+            body: formData,
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            setWebcamResult({ action: "error", message: data.detail || res.status });
+            return;
+          }
+          setWebcamResult(data);
+        } catch (err) {
+          console.error(err);
+          setWebcamResult({ action: "error", message: "Request failed" });
+        }
+      }
 
       async function fetchDashboard() {
         try {
@@ -172,14 +309,14 @@
           });
           if (!res.ok) {
             const errData = await res.json();
-            alert("Lỗi: " + (errData.detail || res.status));
+            alert("Lá»—i: " + (errData.detail || res.status));
             return;
           }
           document.getElementById("vehicleForm").reset();
           await fetchVehicles();
         } catch (err) {
           console.error(err);
-          alert("Không thể kết nối API");
+          alert("KhÃ´ng thá»ƒ káº¿t ná»‘i API");
         }
       }
 
@@ -188,10 +325,21 @@
         fetchDashboard();
         fetchVehicles();
       });
+      const startCamBtn = document.getElementById("startCamBtn");
+      const captureBtn = document.getElementById("captureBtn");
+      const recognizeBtn = document.getElementById("recognizeBtn");
+      const stopCamBtn = document.getElementById("stopCamBtn");
+
+      if (startCamBtn) startCamBtn.addEventListener("click", startCamera);
+      if (captureBtn) captureBtn.addEventListener("click", captureFrame);
+      if (recognizeBtn) recognizeBtn.addEventListener("click", recognizeFromWebcam);
+      if (stopCamBtn) stopCamBtn.addEventListener("click", stopCamera);
 
       fetchDashboard();
       fetchVehicles();
     </script>
   </body>
   </html>
+
+
 
