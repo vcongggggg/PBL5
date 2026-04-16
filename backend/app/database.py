@@ -4,7 +4,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Cấu hình MySQL cho SQLAlchemy.
 # Sửa lại USER, PASSWORD, HOST, PORT, DB_NAME cho phù hợp.
 MYSQL_USER = "root"
-MYSQL_PASSWORD = "123456789"
+MYSQL_PASSWORD = "minh2305178"
 MYSQL_HOST = "127.0.0.1"
 MYSQL_PORT = 3306
 MYSQL_DB = "pbl5"

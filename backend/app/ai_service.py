@@ -9,6 +9,7 @@ hàm sẽ trả về giá trị giả lập để hệ thống không bị dừn
 """
 
 from typing import Tuple
+import re
 
 import cv2
 import numpy as np
@@ -17,6 +18,27 @@ import easyocr
 
 _yolo_model = None
 _ocr_reader = None
+
+
+def normalize_plate(text: str) -> str:
+    """Normalize bien so: upper, bo khoang trang, loai ky tu khong hop le."""
+    if not text:
+        return ""
+    cleaned = re.sub(r"\s+", "", text).upper()
+    cleaned = re.sub(r"[^A-Z0-9\.\-]", "", cleaned)
+    return cleaned
+
+
+def is_valid_vn_plate(text: str) -> bool:
+    """Kiem tra dinh dang bien so Viet Nam theo cac mau pho bien."""
+    if not text:
+        return False
+    patterns = [
+        r"^\d{2}[A-Z]-\d{3}\.\d{2}$",
+        r"^\d{2}[A-Z]-\d{4,5}$",
+        r"^\d{2}[A-Z]\d-\d{3}\.\d{2}$",
+    ]
+    return any(re.match(p, text) for p in patterns)
 
 
 def _load_models() -> None:
@@ -88,7 +110,7 @@ def recognize_plate_from_bytes(image_bytes: bytes) -> Tuple[str, float]:
     if not best_text:
         return "UNKNOWN", 0.0
 
-    plate = best_text.replace(" ", "").upper()
+    plate = normalize_plate(best_text)
     confidence = min(conf_det, best_ocr_conf)
 
     return plate, confidence
