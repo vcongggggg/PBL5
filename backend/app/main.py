@@ -1,5 +1,4 @@
 from datetime import datetime
-import json
 import os
 import uuid
 from typing import List, Optional, Tuple
@@ -140,25 +139,6 @@ def calculate_fee(now: datetime, session: models.ParkingSession, db: Session) ->
     return duration_minutes, fee
 
 
-def log_sensor_event(
-    db: Session,
-    gate_type: str,
-    trigger_type: str,
-    source_id: Optional[str],
-    rfid_tag: Optional[str],
-    payload: Optional[dict] = None,
-) -> None:
-    event = models.SensorEventLog(
-        event_type=trigger_type,
-        gate_type=gate_type,
-        source_id=source_id,
-        rfid_tag=rfid_tag,
-        payload=json.dumps(payload) if payload else None,
-    )
-    db.add(event)
-    db.commit()
-
-
 def get_rfid_card(db: Session, rfid_tag: Optional[str]) -> Optional[models.RFIDCard]:
     if not rfid_tag:
         return None
@@ -259,20 +239,6 @@ def process_gate_scan(
 
     image_path = save_upload_image(image_bytes, filename)
     now = datetime.utcnow()
-
-    log_sensor_event(
-        db=db,
-        gate_type=gate_type,
-        trigger_type=trigger_type,
-        source_id=source_id,
-        rfid_tag=rfid_tag,
-        payload={
-            "plate": recognized_plate,
-            "confidence": confidence,
-            "valid_plate": valid_plate,
-            "rfid_card_type": rfid_card_type,
-        },
-    )
 
     if gate_type == "entry":
         vehicle_type, vehicle_msg = resolve_vehicle_type(db, recognized_plate)
@@ -470,15 +436,6 @@ def gate_trigger(payload: schemas.GateTriggerRequest, db: Session = Depends(get_
         if card.expired_at and card.expired_at < datetime.utcnow():
             raise HTTPException(status_code=400, detail="The RFID da het han")
         rfid_card_type = card.card_type
-
-    log_sensor_event(
-        db=db,
-        gate_type=gate_type,
-        trigger_type=trigger_type,
-        source_id=payload.source_id,
-        rfid_tag=payload.rfid_tag,
-        payload={"mode": "manual-trigger", "rfid_card_type": rfid_card_type},
-    )
 
     return schemas.GateTriggerResponse(
         status="ok",
