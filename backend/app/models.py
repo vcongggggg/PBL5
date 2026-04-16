@@ -1,4 +1,4 @@
-from datetime import datetime, date
+from datetime import datetime
 
 from sqlalchemy import (
     Column,
@@ -14,17 +14,6 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from .database import Base
-
-
-class User(Base):
-    __tablename__ = "users"
-
-    id = Column(Integer, primary_key=True, index=True)
-    username = Column(String(50), unique=True, index=True, nullable=False)
-    password_hash = Column(String(255), nullable=False)
-    full_name = Column(String(100), nullable=True)
-    is_active = Column(Boolean, default=True)
-    role = Column(String(20), default="admin")
 
 
 class Vehicle(Base):
@@ -129,17 +118,5 @@ class FireAlert(Base):
     level = Column(String(20), default="warning")
     message = Column(String(255), nullable=False)
     is_acknowledged = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
-
-
-class SensorEventLog(Base):
-    __tablename__ = "sensor_event_logs"
-
-    id = Column(Integer, primary_key=True, index=True)
-    event_type = Column(String(20), nullable=False)  # sensor / rfid
-    gate_type = Column(String(10), nullable=False)  # entry / exit
-    source_id = Column(String(50), nullable=True)
-    rfid_tag = Column(String(100), nullable=True)
-    payload = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
