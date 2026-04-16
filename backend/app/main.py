@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, time
 import os
 import uuid
 from typing import List, Optional, Tuple
@@ -139,6 +139,35 @@ def calculate_fee(now: datetime, session: models.ParkingSession, db: Session) ->
     return duration_minutes, fee
 
 
+def resolve_session_ticket_type(db: Session, session: models.ParkingSession) -> str:
+    if session.rfid_card_type in ["monthly", "guest"]:
+        return session.rfid_card_type
+
+    vehicle_id = session.vehicle_id
+    if not vehicle_id and session.plate_number:
+        vehicle = (
+            db.query(models.Vehicle)
+            .filter(models.Vehicle.plate_number == session.plate_number)
+            .first()
+        )
+        vehicle_id = vehicle.id if vehicle else None
+
+    if not vehicle_id:
+        return "guest"
+
+    parked_date = session.time_in.date()
+    has_monthly = (
+        db.query(models.Subscription)
+        .filter(
+            models.Subscription.vehicle_id == vehicle_id,
+            models.Subscription.start_date <= parked_date,
+            models.Subscription.end_date >= parked_date,
+        )
+        .first()
+    )
+    return "monthly" if has_monthly else "guest"
+
+
 def get_rfid_card(db: Session, rfid_tag: Optional[str]) -> Optional[models.RFIDCard]:
     if not rfid_tag:
         return None
@@ -254,7 +283,6 @@ def process_gate_scan(
         session = models.ParkingSession(
             vehicle_id=vehicle.id if vehicle else None,
             plate_number=recognized_plate or "UNKNOWN",
-            direction="in",
             time_in=now,
             fee=0,
             image_path=image_path,
@@ -340,7 +368,6 @@ def process_gate_scan(
 
     duration_minutes, fee = calculate_fee(now, open_session, db)
     open_session.time_out = now
-    open_session.direction = "out"
     open_session.fee = fee
     open_session.gate_type = "exit"
     open_session.trigger_type = trigger_type
@@ -387,7 +414,6 @@ def process_checkin_compat(
 
     session = models.ParkingSession(
         plate_number=plate_norm or "UNKNOWN",
-        direction=direction,
         time_in=datetime.utcnow(),
         fee=0,
         image_path=image_path,
@@ -556,10 +582,11 @@ def create_vehicle(vehicle_in: schemas.VehicleCreate, db: Session = Depends(get_
     if exists:
         raise HTTPException(status_code=400, detail="Bien so da ton tai")
 
+    # Guest vehicles do not store owner identity fields.
     vehicle = models.Vehicle(
         plate_number=plate_norm,
-        owner_name=vehicle_in.owner_name,
-        phone=vehicle_in.phone,
+        owner_name=None,
+        phone=None,
         note=vehicle_in.note,
     )
     db.add(vehicle)
@@ -594,6 +621,25 @@ def update_vehicle(
     for field, value in vehicle_in.dict(exclude_unset=True).items():
         setattr(vehicle, field, value)
 
+    today = datetime.utcnow().date()
+    active_sub = (
+        db.query(models.Subscription)
+        .filter(
+            models.Subscription.vehicle_id == vehicle.id,
+            models.Subscription.is_active == True,  # noqa: E712
+            models.Subscription.start_date <= today,
+            models.Subscription.end_date >= today,
+        )
+        .first()
+    )
+    if active_sub and active_sub.monthly_user:
+        vehicle.owner_name = active_sub.monthly_user.full_name
+        vehicle.phone = active_sub.monthly_user.phone
+    else:
+        # Keep guest vehicle owner identity empty.
+        vehicle.owner_name = None
+        vehicle.phone = None
+
     db.commit()
     db.refresh(vehicle)
     return vehicle
@@ -620,6 +666,10 @@ def create_subscription(sub_in: schemas.SubscriptionCreate, db: Session = Depend
     if not monthly_user:
         raise HTTPException(status_code=404, detail="Chu xe ve thang khong ton tai")
 
+    # Monthly registration always syncs owner identity from MonthlyUser.
+    vehicle.owner_name = monthly_user.full_name
+    vehicle.phone = monthly_user.phone
+
     sub = models.Subscription(
         vehicle_id=sub_in.vehicle_id,
         monthly_user_id=sub_in.monthly_user_id,
@@ -637,6 +687,168 @@ def create_subscription(sub_in: schemas.SubscriptionCreate, db: Session = Depend
 @app.get("/api/subscriptions", response_model=List[schemas.Subscription])
 def list_subscriptions(db: Session = Depends(get_db)):
     return db.query(models.Subscription).all()
+
+
+@app.post("/api/monthly-registrations", response_model=schemas.MonthlyRegistrationResponse, status_code=status.HTTP_201_CREATED)
+def create_monthly_registration(payload: schemas.MonthlyRegistrationCreate, db: Session = Depends(get_db)):
+    plate_norm = ai_service.normalize_plate(payload.plate_number)
+    if not ai_service.is_valid_vn_plate(plate_norm):
+        raise HTTPException(status_code=400, detail="Bien so khong hop le")
+    if payload.end_date < payload.start_date:
+        raise HTTPException(status_code=400, detail="end_date phai lon hon hoac bang start_date")
+
+    monthly_user = None
+    if payload.phone:
+        monthly_user = (
+            db.query(models.MonthlyUser)
+            .filter(models.MonthlyUser.phone == payload.phone)
+            .first()
+        )
+
+    if not monthly_user:
+        monthly_user = models.MonthlyUser(
+            full_name=payload.full_name,
+            phone=payload.phone,
+            address=payload.address,
+        )
+        db.add(monthly_user)
+        db.flush()
+    else:
+        monthly_user.full_name = payload.full_name or monthly_user.full_name
+        monthly_user.address = payload.address if payload.address is not None else monthly_user.address
+
+    vehicle = (
+        db.query(models.Vehicle)
+        .filter(models.Vehicle.plate_number == plate_norm)
+        .first()
+    )
+    if not vehicle:
+        vehicle = models.Vehicle(
+            plate_number=plate_norm,
+            owner_name=monthly_user.full_name,
+            phone=monthly_user.phone,
+            note=payload.vehicle_note,
+        )
+        db.add(vehicle)
+        db.flush()
+    else:
+        vehicle.owner_name = monthly_user.full_name
+        vehicle.phone = monthly_user.phone
+        if payload.vehicle_note is not None:
+            vehicle.note = payload.vehicle_note
+
+    now_date = datetime.utcnow().date()
+    active_flag = payload.end_date >= now_date
+
+    (
+        db.query(models.Subscription)
+        .filter(
+            models.Subscription.vehicle_id == vehicle.id,
+            models.Subscription.is_active == True,  # noqa: E712
+        )
+        .update({models.Subscription.is_active: False})
+    )
+
+    sub = models.Subscription(
+        vehicle_id=vehicle.id,
+        monthly_user_id=monthly_user.id,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+        registered_at=datetime.utcnow(),
+        is_active=active_flag,
+    )
+    db.add(sub)
+    db.flush()
+
+    rfid_card = None
+    card_uid = (payload.rfid_card_uid or "").strip()
+    if card_uid:
+        existing_card = (
+            db.query(models.RFIDCard)
+            .filter(models.RFIDCard.card_uid == card_uid)
+            .first()
+        )
+        if existing_card and existing_card.card_type != "monthly":
+            raise HTTPException(status_code=400, detail="RFID nay dang la the guest")
+
+        if existing_card:
+            existing_card.card_type = "monthly"
+            existing_card.monthly_user_id = monthly_user.id
+            existing_card.vehicle_id = vehicle.id
+            existing_card.expired_at = datetime.combine(payload.end_date, time.max)
+            existing_card.is_active = active_flag
+            rfid_card = existing_card
+        else:
+            rfid_card = models.RFIDCard(
+                card_uid=card_uid,
+                card_type="monthly",
+                monthly_user_id=monthly_user.id,
+                vehicle_id=vehicle.id,
+                expired_at=datetime.combine(payload.end_date, time.max),
+                is_active=active_flag,
+            )
+            db.add(rfid_card)
+
+    db.commit()
+    db.refresh(monthly_user)
+    db.refresh(vehicle)
+    db.refresh(sub)
+    if rfid_card:
+        db.refresh(rfid_card)
+
+    return schemas.MonthlyRegistrationResponse(
+        message="Dang ky ve thang thanh cong",
+        subscription=sub,
+        monthly_user=monthly_user,
+        vehicle=vehicle,
+        rfid_card=rfid_card,
+    )
+
+
+@app.get("/api/monthly-registrations", response_model=List[schemas.MonthlyRegistrationItem])
+def list_monthly_registrations(db: Session = Depends(get_db)):
+    subscriptions = (
+        db.query(models.Subscription)
+        .order_by(models.Subscription.registered_at.desc(), models.Subscription.id.desc())
+        .all()
+    )
+
+    items: List[schemas.MonthlyRegistrationItem] = []
+    for sub in subscriptions:
+        user = sub.monthly_user
+        vehicle = sub.vehicle
+        if not user or not vehicle:
+            continue
+
+        card = (
+            db.query(models.RFIDCard)
+            .filter(
+                models.RFIDCard.card_type == "monthly",
+                models.RFIDCard.monthly_user_id == user.id,
+                models.RFIDCard.vehicle_id == vehicle.id,
+            )
+            .order_by(models.RFIDCard.id.desc())
+            .first()
+        )
+
+        items.append(
+            schemas.MonthlyRegistrationItem(
+                subscription_id=sub.id,
+                monthly_user_id=user.id,
+                monthly_user_name=user.full_name,
+                monthly_user_phone=user.phone,
+                vehicle_id=vehicle.id,
+                plate_number=vehicle.plate_number,
+                start_date=sub.start_date,
+                end_date=sub.end_date,
+                is_active=sub.is_active,
+                rfid_card_id=card.id if card else None,
+                rfid_card_uid=card.card_uid if card else None,
+                registered_at=sub.registered_at,
+            )
+        )
+
+    return items
 
 
 # ============ MONTHLY USERS ============
@@ -719,7 +931,6 @@ def parking_check_out(payload: schemas.ParkingCheckoutRequest, db: Session = Dep
 
     duration_minutes, fee = calculate_fee(now, session, db)
     session.time_out = now
-    session.direction = "out"
     session.fee = fee
     session.gate_type = "exit"
     session.plate_out = payload.plate_number
@@ -732,6 +943,39 @@ def parking_check_out(payload: schemas.ParkingCheckoutRequest, db: Session = Dep
         session=session,
         duration_minutes=duration_minutes,
     )
+
+
+@app.get("/api/parking-history", response_model=List[schemas.ParkingHistoryItem])
+def list_parking_history(limit: int = 100, db: Session = Depends(get_db)):
+    sessions = (
+        db.query(models.ParkingSession)
+        .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
+        .limit(limit)
+        .all()
+    )
+
+    items: List[schemas.ParkingHistoryItem] = []
+    for session in sessions:
+        duration_minutes = None
+        if session.time_out:
+            duration_minutes = int((session.time_out - session.time_in).total_seconds() // 60)
+
+        items.append(
+            schemas.ParkingHistoryItem(
+                session_id=session.id,
+                plate_number=session.plate_number,
+                ticket_type=resolve_session_ticket_type(db, session),
+                gate_type=session.gate_type,
+                trigger_type=session.trigger_type,
+                time_in=session.time_in,
+                time_out=session.time_out,
+                duration_minutes=duration_minutes,
+                fee=session.fee or 0,
+                match_status=session.match_status,
+            )
+        )
+
+    return items
 
 
 # ============ FIRE ALERTS ============

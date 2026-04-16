@@ -82,7 +82,6 @@ class ParkingSession(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
     rfid_card_id = Column(Integer, ForeignKey("rfid_cards.id"), nullable=True)
     plate_number = Column(String(20), index=True)
-    direction = Column(String(10))  # in / out
     time_in = Column(DateTime, default=datetime.utcnow)
     time_out = Column(DateTime, nullable=True)
     fee = Column(Float, default=0)

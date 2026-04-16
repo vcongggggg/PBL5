@@ -48,7 +48,6 @@ class Subscription(SubscriptionBase):
 
 class ParkingSessionBase(BaseModel):
     plate_number: str
-    direction: str
     image_path: Optional[str] = None
 
 
@@ -109,6 +108,19 @@ class ParkingCheckoutRequest(BaseModel):
 class ParkingCheckoutResponse(BaseModel):
     session: ParkingSession
     duration_minutes: int
+
+
+class ParkingHistoryItem(BaseModel):
+    session_id: int
+    plate_number: str
+    ticket_type: str  # monthly | guest
+    gate_type: Optional[str] = None
+    trigger_type: Optional[str] = None
+    time_in: datetime
+    time_out: Optional[datetime] = None
+    duration_minutes: Optional[int] = None
+    fee: float
+    match_status: Optional[str] = None
 
 
 class PlateRecognitionResult(BaseModel):
@@ -212,5 +224,39 @@ class RFIDCard(RFIDCardBase):
     issued_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class MonthlyRegistrationCreate(BaseModel):
+    full_name: str
+    phone: Optional[str] = None
+    address: Optional[str] = None
+    plate_number: str
+    vehicle_note: Optional[str] = None
+    start_date: date
+    end_date: date
+    rfid_card_uid: Optional[str] = None
+
+
+class MonthlyRegistrationItem(BaseModel):
+    subscription_id: int
+    monthly_user_id: int
+    monthly_user_name: str
+    monthly_user_phone: Optional[str] = None
+    vehicle_id: int
+    plate_number: str
+    start_date: date
+    end_date: date
+    is_active: bool
+    rfid_card_id: Optional[int] = None
+    rfid_card_uid: Optional[str] = None
+    registered_at: datetime
+
+
+class MonthlyRegistrationResponse(BaseModel):
+    message: str
+    subscription: Subscription
+    monthly_user: MonthlyUser
+    vehicle: Vehicle
+    rfid_card: Optional[RFIDCard] = None
 
 

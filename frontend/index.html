@@ -261,6 +261,7 @@
           <button class="component-tab-btn active" data-component-tab="overview">Tong quan</button>
           <button class="component-tab-btn" data-component-tab="fire">Canh bao chay</button>
           <button class="component-tab-btn" data-component-tab="camera">Camera vao/ra</button>
+          <button class="component-tab-btn" data-component-tab="monthly">Dang ky ve thang</button>
           <button class="component-tab-btn" data-component-tab="vehicles">Danh sach xe</button>
         </div>
 
@@ -370,27 +371,58 @@
           </div>
         </section>
 
-        <section class="component-tab-panel" id="component-vehicles">
-          <h3>Danh sách xe</h3>
-          <form id="vehicleForm" style="margin-bottom: 0.9rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.7rem">
-            <input id="plate" placeholder="Biển số (VD: 51F-123.45)" required />
-            <input id="owner" placeholder="Tên chủ xe" />
-            <input id="phone" placeholder="Số điện thoại" />
-            <input id="note" placeholder="Ghi chú" />
-            <button type="submit">Thêm xe</button>
+        <section class="component-tab-panel" id="component-monthly">
+          <h3>Dang ky ve thang</h3>
+          <form id="monthlyForm" style="margin-bottom: 0.9rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.7rem">
+            <input id="monthlyFullName" placeholder="Ho ten chu xe" required />
+            <input id="monthlyPhone" placeholder="So dien thoai" />
+            <input id="monthlyAddress" placeholder="Dia chi" />
+            <input id="monthlyPlate" placeholder="Bien so" required />
+            <input id="monthlyRfid" placeholder="RFID UID (tuỳ chọn)" />
+            <input id="monthlyStartDate" type="date" required />
+            <input id="monthlyEndDate" type="date" required />
+            <input id="monthlyVehicleNote" placeholder="Ghi chu xe" />
+            <button type="submit">Dang ky ve thang</button>
           </form>
+          <div class="status-text" id="monthlyStatus" style="margin-bottom: 0.6rem">Nhap thong tin de tao dang ky ve thang.</div>
           <div style="overflow-x: auto">
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Biển số</th>
-                  <th>Chủ xe</th>
+                  <th>Sub ID</th>
+                  <th>Chu xe</th>
                   <th>SĐT</th>
-                  <th>Ghi chú</th>
+                  <th>Bien so</th>
+                  <th>RFID</th>
+                  <th>Tu ngay</th>
+                  <th>Den ngay</th>
+                  <th>Trang thai</th>
                 </tr>
               </thead>
-              <tbody id="vehicleTableBody"></tbody>
+              <tbody id="monthlyTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="component-tab-panel" id="component-vehicles">
+          <h3>Lich su vao ra</h3>
+          <div style="overflow-x: auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Phien</th>
+                  <th>Biển số</th>
+                  <th>Loai ve</th>
+                  <th>Cong</th>
+                  <th>Trigger</th>
+                  <th>Vao luc</th>
+                  <th>Ra luc</th>
+                  <th>Phut gui</th>
+                  <th>Phi</th>
+                  <th>Trang thai</th>
+                </tr>
+              </thead>
+              <tbody id="parkingHistoryBody"></tbody>
             </table>
           </div>
         </section>
@@ -641,20 +673,46 @@
         }
       }
 
-      async function fetchVehicles() {
+      function formatDateTime(value) {
+        if (!value) return "-";
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return value;
+        return dt.toLocaleString("vi-VN");
+      }
+
+      function formatTicketType(value) {
+        if (value === "monthly") return "Ve thang";
+        return "Ve luot";
+      }
+
+      async function fetchParkingHistory() {
         try {
-          const res = await fetch(`${API_BASE}/api/vehicles`);
-          const vehicles = await res.json();
-          const tbody = document.getElementById("vehicleTableBody");
+          const res = await fetch(`${API_BASE}/api/parking-history?limit=200`);
+          if (!res.ok) throw new Error("history fetch failed");
+          const rows = await res.json();
+          const tbody = document.getElementById("parkingHistoryBody");
           tbody.innerHTML = "";
-          vehicles.forEach((v) => {
+
+          if (!rows.length) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="10" class="status-text">Chua co du lieu vao/ra.</td>`;
+            tbody.appendChild(tr);
+            return;
+          }
+
+          rows.forEach((row) => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
-              <td>${v.id}</td>
-              <td>${v.plate_number}</td>
-              <td>${v.owner_name || ""}</td>
-              <td>${v.phone || ""}</td>
-              <td>${v.note || ""}</td>
+              <td>${row.session_id}</td>
+              <td>${row.plate_number || ""}</td>
+              <td>${formatTicketType(row.ticket_type)}</td>
+              <td>${row.gate_type || "-"}</td>
+              <td>${row.trigger_type || "-"}</td>
+              <td>${formatDateTime(row.time_in)}</td>
+              <td>${formatDateTime(row.time_out)}</td>
+              <td>${row.duration_minutes ?? "-"}</td>
+              <td>${Number(row.fee || 0).toLocaleString("vi-VN")}</td>
+              <td>${row.match_status || "-"}</td>
             `;
             tbody.appendChild(tr);
           });
@@ -663,35 +721,85 @@
         }
       }
 
-      async function createVehicle(evt) {
-        evt.preventDefault();
-        const plate = document.getElementById("plate").value.trim();
-        const owner = document.getElementById("owner").value.trim();
-        const phone = document.getElementById("phone").value.trim();
-        const note = document.getElementById("note").value.trim();
-
-        if (!plate) return;
-
+      async function fetchMonthlyRegistrations() {
         try {
-          const res = await fetch(`${API_BASE}/api/vehicles`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              plate_number: plate,
-              owner_name: owner || null,
-              phone: phone || null,
-              note: note || null,
-            }),
-          });
-          if (!res.ok) {
-            const errData = await res.json();
-            alert(errData.detail || "Loi tao xe");
+          const res = await fetch(`${API_BASE}/api/monthly-registrations`);
+          if (!res.ok) throw new Error("monthly registrations failed");
+          const items = await res.json();
+          const tbody = document.getElementById("monthlyTableBody");
+          tbody.innerHTML = "";
+
+          if (!items.length) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="8" class="status-text">Chua co dang ky ve thang.</td>`;
+            tbody.appendChild(tr);
             return;
           }
-          document.getElementById("vehicleForm").reset();
+
+          items.forEach((item) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${item.subscription_id}</td>
+              <td>${item.monthly_user_name || ""}</td>
+              <td>${item.monthly_user_phone || ""}</td>
+              <td>${item.plate_number || ""}</td>
+              <td>${item.rfid_card_uid || "-"}</td>
+              <td>${item.start_date || ""}</td>
+              <td>${item.end_date || ""}</td>
+              <td>${item.is_active ? "Con han" : "Het han"}</td>
+            `;
+            tbody.appendChild(tr);
+          });
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function createMonthlyRegistration(evt) {
+        evt.preventDefault();
+
+        const payload = {
+          full_name: document.getElementById("monthlyFullName").value.trim(),
+          phone: document.getElementById("monthlyPhone").value.trim() || null,
+          address: document.getElementById("monthlyAddress").value.trim() || null,
+          plate_number: document.getElementById("monthlyPlate").value.trim(),
+          vehicle_note: document.getElementById("monthlyVehicleNote").value.trim() || null,
+          start_date: document.getElementById("monthlyStartDate").value,
+          end_date: document.getElementById("monthlyEndDate").value,
+          rfid_card_uid: document.getElementById("monthlyRfid").value.trim() || null,
+        };
+
+        const statusEl = document.getElementById("monthlyStatus");
+        if (!payload.full_name || !payload.plate_number || !payload.start_date || !payload.end_date) {
+          statusEl.className = "status-text warn";
+          statusEl.textContent = "Can nhap du thong tin bat buoc.";
+          return;
+        }
+
+        try {
+          statusEl.className = "status-text warn";
+          statusEl.textContent = "Dang tao dang ky ve thang...";
+
+          const res = await fetch(`${API_BASE}/api/monthly-registrations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "Dang ky ve thang that bai");
+          }
+
+          document.getElementById("monthlyForm").reset();
+          statusEl.className = "status-text ok";
+          statusEl.textContent = data.message || "Dang ky ve thang thanh cong";
+
+          await fetchMonthlyRegistrations();
           await fetchVehicles();
         } catch (err) {
           console.error(err);
+          statusEl.className = "status-text danger";
+          statusEl.textContent = err.message || "Loi dang ky ve thang";
         }
       }
 
@@ -727,6 +835,7 @@
           overview: document.getElementById("component-overview"),
           fire: document.getElementById("component-fire"),
           camera: document.getElementById("component-camera"),
+          monthly: document.getElementById("component-monthly"),
           vehicles: document.getElementById("component-vehicles"),
         };
 
@@ -744,10 +853,11 @@
         });
       }
 
-      document.getElementById("vehicleForm").addEventListener("submit", createVehicle);
+      document.getElementById("monthlyForm").addEventListener("submit", createMonthlyRegistration);
       document.getElementById("refreshBtn").addEventListener("click", async () => {
         await fetchDashboard();
-        await fetchVehicles();
+        await fetchMonthlyRegistrations();
+        await fetchParkingHistory();
         await fetchFireAlerts();
       });
 
@@ -757,7 +867,8 @@
       renderGateResult("exit", {});
 
       fetchDashboard();
-      fetchVehicles();
+      fetchMonthlyRegistrations();
+      fetchParkingHistory();
       fetchFireAlerts();
       setInterval(fetchFireAlerts, 3000);
     </script>
