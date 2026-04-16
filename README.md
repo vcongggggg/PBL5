@@ -4,7 +4,15 @@ Repo này chứa mã nguồn cho:
 
 - **Firmware ESP32** điều khiển barrier.
 - **Backend FastAPI** xử lý logic bãi xe, giao tiếp với ESP32 và frontend.
-- **Frontend Web** đơn giản để xem dashboard và quản lý xe vé tháng.
+- **Frontend Web** có 2 tab quét biển số (cổng vào/cổng ra), trigger cảm biến/RFID và cảnh báo cháy.
+
+## Luồng chính đã triển khai
+
+- 2 cổng quét biển số: `entry` và `exit`.
+- 2 kiểu trigger: `sensor` và `rfid`.
+- Khi trigger, frontend chụp frame camera và gửi backend nhận diện biển số bằng YOLO + EasyOCR.
+- Cổng ra sẽ so sánh biển số vừa quét với dữ liệu biển vào đang mở trong DB để quyết định mở cổng.
+- Có module cảnh báo cháy, hiển thị realtime bằng polling từ frontend.
 
 ### 1. Cấu trúc thư mục
 
@@ -56,10 +64,10 @@ Có thể mở trực tiếp file `frontend/index.html` bằng trình duyệt, h
 
 ```bash
 cd frontend
-python -m http.server 5173
+python -m http.server 5174
 ```
 
-Sau đó mở `http://localhost:5173/` trong trình duyệt.  
+Sau đó mở `http://localhost:5174/` trong trình duyệt.  
 Đảm bảo backend FastAPI đang chạy tại `http://localhost:8000`. Nếu đổi port/host, hãy sửa hằng số `API_BASE` trong `frontend/index.html`.
 
 ### 4. Kết nối với ESP32
@@ -69,4 +77,23 @@ Sau đó mở `http://localhost:5173/` trong trình duyệt.
   - `POST /api/esp/manual-open`
 - Firmware mẫu hiện đang **giả lập biển số** để test luồng end-to-end.  
 Khi AI (YOLO + OCR) hoàn thiện, backend sẽ được cập nhật để nhận ảnh, nhận diện biển số thật và cập nhật logic tính tiền / vé tháng.
+
+### 5. API chính cho frontend (đã đồng bộ)
+
+- Trigger cảm biến/RFID:
+  - `POST /api/gates/trigger`
+- Quét biển số theo cổng:
+  - `POST /api/gates/scan`
+    - Form data: `file`, `gate_type` (`entry|exit`), `trigger_type` (`sensor|rfid`), `source_id`, `rfid_tag`.
+- Cảnh báo cháy:
+  - `POST /api/fire-alerts`
+  - `GET /api/fire-alerts?unacked_only=true&limit=10`
+  - `PATCH /api/fire-alerts/{alert_id}/ack`
+
+### 6. Tương thích API cũ
+
+Các endpoint cũ vẫn còn để không làm vỡ client cũ:
+
+- `POST /api/parking/check-in`
+- `POST /api/parking/check-out`
 

@@ -10,6 +10,7 @@ hàm sẽ trả về giá trị giả lập để hệ thống không bị dừn
 
 from typing import Tuple
 import re
+import os
 
 import cv2
 import numpy as np
@@ -47,10 +48,16 @@ def _load_models() -> None:
 
     if _yolo_model is None:
         try:
-            # TODO: thay 'yolov8n.pt' bằng model biển số của bạn (vd: 'weights/plate_yolov8.pt')
-            _yolo_model = YOLO("yolov8n.pt")
+            env_model_path = os.getenv("PLATE_MODEL_PATH", "").strip()
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            default_model_path = os.path.join(base_dir, "best.pt")
+            model_path = env_model_path or default_model_path
+            _yolo_model = YOLO(model_path)
         except Exception:
-            _yolo_model = None
+            try:
+                _yolo_model = YOLO("yolov8n.pt")
+            except Exception:
+                _yolo_model = None
 
     if _ocr_reader is None:
         try:
