@@ -50,6 +50,13 @@ def save_upload_image(image_bytes: bytes, original_name: Optional[str]) -> Optio
     return file_path
 
 
+def get_config_text(db: Session, key: str, default: str = "") -> str:
+    config = db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
+    if not config or not config.value:
+        return default
+    return str(config.value)
+
+
 def process_checkin(
     db: Session,
     plate: str,
@@ -146,7 +153,7 @@ def handle_esp_event(
         action=result.action,
         plate=result.plate,
         vehicle_type=result.vehicle_type,
-        message=result.message,
+        message=f"{result.message} (gate={payload.gate_id or 'unknown'})",
     )
 
 
@@ -159,6 +166,49 @@ def handle_manual_open(payload: schemas.ManualOpenRequest):
         "reason": payload.reason,
         "time": datetime.utcnow().isoformat(),
     }
+
+
+@app.post("/api/esp/rfid", response_model=schemas.EspRfidResponse)
+def handle_esp_rfid(
+    payload: schemas.EspRfidRequest, db: Session = Depends(get_db)
+):
+    """
+    Xac thuc UID RFID tu ESP32.
+    Whitelist duoc luu trong SystemConfig key='rfid_uid_whitelist'
+    theo dinh dang: UID1,UID2,UID3
+    """
+    uid_norm = payload.uid.strip().upper().replace(" ", "")
+    whitelist_raw = get_config_text(db, "rfid_uid_whitelist", "")
+    whitelist = {
+        item.strip().upper().replace(" ", "")
+        for item in whitelist_raw.split(",")
+        if item.strip()
+    }
+
+    allowed = uid_norm in whitelist if whitelist else False
+    action = "open" if allowed else "ignore"
+    message = "RFID hop le" if allowed else "RFID khong hop le"
+
+    return schemas.EspRfidResponse(
+        action=action,
+        uid=uid_norm,
+        message=message,
+        direction=payload.direction,
+        gate_id=payload.gate_id,
+    )
+
+
+@app.post("/api/esp/fire-alert", response_model=schemas.FireAlertResponse)
+def handle_fire_alert(payload: schemas.FireAlertRequest):
+    """
+    Nhan canh bao chay tu ESP32.
+    Ban hien tai: ghi nhan canh bao va yeu cau mo tat ca cong.
+    """
+    return schemas.FireAlertResponse(
+        status="ok",
+        action="open_all",
+        message=payload.message or f"Fire alert from {payload.device_id}",
+    )
 
 
 # ============ AI â€“ RECOGNIZE PLATE ============

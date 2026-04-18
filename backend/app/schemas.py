@@ -68,6 +68,7 @@ class EspEventRequest(BaseModel):
     device_id: str
     event_type: str
     direction: str
+    gate_id: Optional[str] = None
 
 
 class EspEventResponse(BaseModel):
@@ -80,6 +81,33 @@ class EspEventResponse(BaseModel):
 class ManualOpenRequest(BaseModel):
     device_id: str
     reason: str
+
+
+class EspRfidRequest(BaseModel):
+    device_id: str
+    uid: str
+    direction: str = "in"
+    gate_id: Optional[str] = None
+
+
+class EspRfidResponse(BaseModel):
+    action: str
+    uid: str
+    message: str
+    direction: str
+    gate_id: Optional[str] = None
+
+
+class FireAlertRequest(BaseModel):
+    device_id: str
+    sensor_value: int
+    message: Optional[str] = None
+
+
+class FireAlertResponse(BaseModel):
+    status: str
+    action: str
+    message: str
 
 
 class DashboardStats(BaseModel):

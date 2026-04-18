@@ -62,11 +62,23 @@ python -m http.server 5173
 Sau đó mở `http://localhost:5173/` trong trình duyệt.  
 Đảm bảo backend FastAPI đang chạy tại `http://localhost:8000`. Nếu đổi port/host, hãy sửa hằng số `API_BASE` trong `frontend/index.html`.
 
-### 4. Kết nối với ESP32
+### 4. Kết nối với ESP32 (hardware profile mới)
 
-- ESP32 gọi tới các endpoint:
-  - `POST /api/esp/events`
-  - `POST /api/esp/manual-open`
-- Firmware mẫu hiện đang **giả lập biển số** để test luồng end-to-end.  
-Khi AI (YOLO + OCR) hoàn thiện, backend sẽ được cập nhật để nhận ảnh, nhận diện biển số thật và cập nhật logic tính tiền / vé tháng.
+Firmware `firmware/esp32_barrier/esp32_barrier.ino` đã cập nhật cho:
+
+- 2 servo (cổng vào/cổng ra)
+- 2 cảm biến IR
+- 1 RFID RC522
+- 1 cảm biến cháy + relay 2 kênh
+
+ESP32 gọi các endpoint:
+
+- `POST /api/esp/events` (IR in/out)
+- `POST /api/esp/rfid` (xác thực UID)
+- `POST /api/esp/fire-alert` (cảnh báo cháy)
+
+Lưu ý:
+
+- Luồng `/api/esp/events` hiện vẫn dùng plate demo trong backend để giữ tương thích phần cứng.
+- Bạn có thể cấu hình whitelist RFID trong `system_config` với key `rfid_uid_whitelist` (danh sách UID ngăn cách bởi dấu phẩy).
 
