@@ -1,0 +1,153 @@
+{
+  "version": 1,
+  "author": "PBL5 Team",
+  "editor": "wokwi",
+  "parts": [
+    {
+      "type": "wokwi-esp32-devkit-v1",
+      "id": "esp",
+      "top": 0,
+      "left": 200,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo_in",
+      "top": -150,
+      "left": -50,
+      "attrs": { "hornColor": "green" }
+    },
+    {
+      "type": "wokwi-servo",
+      "id": "servo_out",
+      "top": -150,
+      "left": 150,
+      "attrs": { "hornColor": "orange" }
+    },
+    {
+      "type": "wokwi-pir-motion-sensor",
+      "id": "ir_in",
+      "top": -200,
+      "left": 400,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pir-motion-sensor",
+      "id": "ir_out",
+      "top": -200,
+      "left": 550,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-mfrc522",
+      "id": "rfid1",
+      "top": -50,
+      "left": -150,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-pushbutton",
+      "id": "fire_btn",
+      "top": 250,
+      "left": -50,
+      "attrs": { "color": "red", "label": "FIRE SENSOR" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_pulldown",
+      "top": 300,
+      "left": -50,
+      "attrs": { "value": "10000" }
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay_ch1",
+      "top": 250,
+      "left": 450,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-relay-module",
+      "id": "relay_ch2",
+      "top": 250,
+      "left": 650,
+      "attrs": {}
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_buzzer",
+      "top": 400,
+      "left": 500,
+      "attrs": { "color": "red" }
+    },
+    {
+      "type": "wokwi-led",
+      "id": "led_warning",
+      "top": 400,
+      "left": 700,
+      "attrs": { "color": "yellow" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_led1",
+      "top": 370,
+      "left": 500,
+      "attrs": { "value": "220" }
+    },
+    {
+      "type": "wokwi-resistor",
+      "id": "r_led2",
+      "top": 370,
+      "left": 700,
+      "attrs": { "value": "220" }
+    }
+  ],
+  "connections": [
+    ["servo_in:PWM", "esp:14", "green", ["v0"]],
+    ["servo_in:V+", "esp:VIN", "red", ["v0"]],
+    ["servo_in:GND", "esp:GND.2", "black", ["v0"]],
+
+    ["servo_out:PWM", "esp:13", "orange", ["v0"]],
+    ["servo_out:V+", "esp:VIN", "red", ["v0"]],
+    ["servo_out:GND", "esp:GND.2", "black", ["v0"]],
+
+    ["ir_in:OUT", "esp:27", "purple", ["v0"]],
+    ["ir_in:VCC", "esp:3V3", "red", ["v0"]],
+    ["ir_in:GND", "esp:GND.1", "black", ["v0"]],
+
+    ["ir_out:OUT", "esp:26", "purple", ["v0"]],
+    ["ir_out:VCC", "esp:3V3", "red", ["v0"]],
+    ["ir_out:GND", "esp:GND.1", "black", ["v0"]],
+
+    ["rfid1:SDA", "esp:5", "green", ["v0"]],
+    ["rfid1:SCK", "esp:18", "blue", ["v0"]],
+    ["rfid1:MOSI", "esp:23", "cyan", ["v0"]],
+    ["rfid1:MISO", "esp:19", "gold", ["v0"]],
+    ["rfid1:RST", "esp:22", "magenta", ["v0"]],
+    ["rfid1:3.3V", "esp:3V3", "red", ["v0"]],
+    ["rfid1:GND", "esp:GND.1", "black", ["v0"]],
+
+    ["fire_btn:1.l", "esp:3V3", "red", ["v0"]],
+    ["fire_btn:2.l", "esp:33", "brown", ["v0"]],
+    ["fire_btn:2.l", "r_pulldown:1", "brown", ["v0"]],
+    ["r_pulldown:2", "esp:GND.2", "black", ["v0"]],
+
+    ["relay_ch1:VCC", "esp:VIN", "red", ["v0"]],
+    ["relay_ch1:GND", "esp:GND.2", "black", ["v0"]],
+    ["relay_ch1:IN", "esp:32", "blue", ["v0"]],
+
+    ["relay_ch2:VCC", "esp:VIN", "red", ["v0"]],
+    ["relay_ch2:GND", "esp:GND.2", "black", ["v0"]],
+    ["relay_ch2:IN", "esp:25", "blue", ["v0"]],
+
+    ["relay_ch1:COM", "esp:VIN", "red", ["v0"]],
+    ["relay_ch1:NO", "r_led1:1", "red", ["v0"]],
+    ["r_led1:2", "led_buzzer:A", "red", ["v0"]],
+    ["led_buzzer:C", "esp:GND.2", "black", ["v0"]],
+
+    ["relay_ch2:COM", "esp:VIN", "red", ["v0"]],
+    ["relay_ch2:NO", "r_led2:1", "red", ["v0"]],
+    ["r_led2:2", "led_warning:A", "yellow", ["v0"]],
+    ["led_warning:C", "esp:GND.2", "black", ["v0"]]
+  ]
+}
