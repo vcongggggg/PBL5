@@ -513,6 +513,22 @@
         return cfg.capturedBlob;
       }
 
+      async function waitForVideoReady(gate) {
+        const cfg = gateState[gate];
+        if (!cfg) return;
+        const video = cfg.video;
+        // Chờ tối đa 3 giây cho video có frame thật
+        for (let i = 0; i < 30; i++) {
+          if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+            // Đợi thêm 200ms để camera auto-exposure ổn định
+            await new Promise((r) => setTimeout(r, 200));
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        console.warn("Camera chưa sẵn sàng sau 3 giây");
+      }
+
       async function sendTrigger(gate, triggerType, rfidTag = "") {
         const sourceId = `${gate}-${triggerType}-ui`;
         const payload = {
@@ -569,6 +585,8 @@
           await sendTrigger(gate, triggerType, rfidTag);
 
           await startCamera(gate);
+          setStatus(gate, "đang chờ camera ổn định...", "warn");
+          await waitForVideoReady(gate);
           const blob = await captureFrame(gate);
           if (!blob) {
             setStatus(gate, "chưa có frame từ camera", "warn");

@@ -9,5 +9,6 @@ cryptography
 numpy
 opencv-python
 ultralytics
+paddleocr
 easyocr
 
