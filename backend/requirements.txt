@@ -5,8 +5,10 @@ pydantic
 python-multipart
 alembic
 pymysql
+cryptography
 numpy
 opencv-python
 ultralytics
+paddleocr
 easyocr
 

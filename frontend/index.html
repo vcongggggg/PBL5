@@ -2,160 +2,427 @@
 <html lang="vi">
   <head>
     <meta charset="UTF-8" />
-    <title>PBL5 Smart Parking Dashboard</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>PBL5 Smart Parking Control</title>
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css"
     />
     <style>
+      :root {
+        --bg-1: #0b1321;
+        --bg-2: #0f2638;
+        --card: rgba(7, 20, 36, 0.88);
+        --soft: #8da9c4;
+        --ok: #22c55e;
+        --warn: #f59e0b;
+        --danger: #ef4444;
+        --accent: #38bdf8;
+        --line: rgba(141, 169, 196, 0.22);
+      }
       body {
-        background: radial-gradient(circle at top left, #152642, #050910);
-        color: #f5f7ff;
+        color: #e6f1ff;
+        background:
+          radial-gradient(circle at 85% 15%, rgba(56, 189, 248, 0.16), transparent 38%),
+          radial-gradient(circle at 10% 90%, rgba(34, 197, 94, 0.12), transparent 34%),
+          linear-gradient(145deg, var(--bg-1), var(--bg-2));
+        min-height: 100vh;
       }
       main {
-        max-width: 1200px;
-        margin: 2rem auto;
+        width: min(1260px, 94vw);
+        margin: 1.5rem auto 3rem;
       }
       .card {
-        background: rgba(15, 23, 42, 0.9);
+        background: var(--card);
+        border: 1px solid var(--line);
         border-radius: 16px;
-        padding: 1.5rem;
-        box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
-        backdrop-filter: blur(12px);
+        padding: 1.1rem;
+        box-shadow: 0 18px 36px rgba(0, 0, 0, 0.35);
+      }
+      .top-menu {
+        display: flex;
+        gap: 0.55rem;
+        flex-wrap: wrap;
+        margin-bottom: 0.85rem;
+      }
+      .menu-pill {
+        padding: 0.26rem 0.65rem;
+        border-radius: 999px;
+        border: 1px solid rgba(56, 189, 248, 0.48);
+        background: rgba(56, 189, 248, 0.08);
+        font-size: 0.8rem;
+      }
+      .header-row {
+        display: flex;
+        justify-content: space-between;
+        gap: 1rem;
+        align-items: center;
+      }
+      .component-tabs {
+        margin-top: 0.8rem;
+        display: flex;
+        gap: 0.45rem;
+        flex-wrap: wrap;
+      }
+      .component-tab-btn {
+        border: 1px solid rgba(56, 189, 248, 0.48);
+        background: rgba(56, 189, 248, 0.08);
+        color: #dff4ff;
+        font-size: 0.85rem;
+        padding: 0.35rem 0.7rem;
+      }
+      .component-tab-btn.active {
+        background: rgba(56, 189, 248, 0.26);
+      }
+      .component-tab-panel {
+        display: none;
+        margin-top: 0.85rem;
+      }
+      .component-tab-panel.active {
+        display: block;
+      }
+      .subtitle {
+        margin: 0;
+        color: var(--soft);
       }
       .stats {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-        gap: 1rem;
+        gap: 0.7rem;
       }
       .stat-card {
+        padding: 0.8rem;
         border-radius: 12px;
-        padding: 1rem;
-        background: linear-gradient(135deg, #1d293b, #020617);
+        background: linear-gradient(165deg, rgba(56, 189, 248, 0.12), rgba(15, 23, 42, 0.8));
       }
       .stat-label {
-        font-size: 0.9rem;
-        color: #9ca3af;
+        color: var(--soft);
+        font-size: 0.86rem;
       }
       .stat-value {
-        font-size: 1.8rem;
+        font-size: 1.7rem;
         font-weight: 700;
-        margin-top: 0.2rem;
       }
-      .webcam-grid {
+      .fire-banner {
+        margin: 1rem 0;
+        border-radius: 12px;
+        border: 1px solid rgba(239, 68, 68, 0.55);
+        background: rgba(127, 29, 29, 0.2);
+        padding: 0.85rem;
+      }
+      .fire-title {
+        margin: 0 0 0.5rem;
+        color: #fecaca;
+      }
+      .fire-list {
         display: grid;
-        grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-        gap: 1rem;
+        gap: 0.45rem;
+      }
+      .fire-item {
+        display: flex;
+        justify-content: space-between;
+        gap: 0.8rem;
+        align-items: center;
+        padding: 0.55rem 0.7rem;
+        border-radius: 10px;
+        background: rgba(239, 68, 68, 0.13);
+      }
+      .board-title {
+        margin: 0.35rem 0 0.7rem;
+        font-size: 1rem;
+        color: #cce8ff;
+      }
+      .dual-board {
+        display: flex;
+        gap: 0.8rem;
+        align-items: stretch;
+      }
+      .lane {
+        flex: 1;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 0.7rem;
+        background: rgba(2, 6, 23, 0.45);
+      }
+      .lane-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 0.45rem;
+        padding: 0.35rem 0.55rem;
+        border-radius: 8px;
+        background: linear-gradient(120deg, rgba(56, 189, 248, 0.2), rgba(15, 23, 42, 0.5));
+      }
+      .lane-name {
+        font-weight: 700;
+        letter-spacing: 0.4px;
+      }
+      .lane-sub {
+        font-size: 0.76rem;
+        color: var(--soft);
+      }
+      .lane-media {
+        display: grid;
+        grid-template-columns: 1.2fr 0.8fr;
+        gap: 0.55rem;
         align-items: start;
       }
-      .webcam-preview {
-        background: #0b1220;
-        border-radius: 12px;
-        padding: 0.75rem;
-      }
-      .webcam-preview video,
-      .webcam-preview canvas {
-        width: 100%;
+      .camera-main,
+      .plate-preview {
+        background: rgba(2, 6, 23, 0.6);
         border-radius: 10px;
+        padding: 0.45rem;
+        border: 1px solid rgba(141, 169, 196, 0.16);
+      }
+      .camera-main video,
+      .plate-preview canvas {
+        width: 100%;
+        border-radius: 8px;
         background: #000;
       }
-      .result-list {
-        display: grid;
-        gap: 0.35rem;
-        font-size: 0.9rem;
+      .box-label {
+        font-size: 0.74rem;
+        color: var(--soft);
+        margin-bottom: 0.3rem;
       }
-      table {
-        font-size: 0.9rem;
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 0.45rem;
+        margin-top: 0.5rem;
+      }
+      .result-card {
+        margin-top: 0.6rem;
+        border-radius: 10px;
+        padding: 0.65rem;
+        background: rgba(15, 23, 42, 0.68);
+        border: 1px solid var(--line);
+      }
+      .result-row {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 0.4rem;
+        font-size: 0.87rem;
+        margin-bottom: 0.2rem;
+      }
+      .status-text {
+        color: var(--soft);
+        font-size: 0.87rem;
+      }
+      .ok {
+        color: var(--ok);
+      }
+      .warn {
+        color: var(--warn);
+      }
+      .danger {
+        color: var(--danger);
+      }
+      @keyframes reveal {
+        from {
+          opacity: 0;
+          transform: translateY(4px);
+        }
+        to {
+          opacity: 1;
+          transform: translateY(0);
+        }
+      }
+      @media (max-width: 900px) {
+        .dual-board {
+          flex-direction: column;
+        }
+        .lane-media {
+          grid-template-columns: 1fr;
+        }
       }
     </style>
   </head>
   <body>
     <main>
       <section class="card">
-        <header style="display: flex; justify-content: space-between; align-items: center; gap: 1rem">
+        <div class="top-menu">
+          <span class="menu-pill">He thong</span>
+          <span class="menu-pill">Danh muc</span>
+          <span class="menu-pill">Quan ly vao ra</span>
+          <span class="menu-pill">Bao cao</span>
+          <span class="menu-pill">Tro giup</span>
+        </div>
+
+        <div class="header-row">
           <div>
-            <h1 style="margin-bottom: 0.25rem">PBL5 Smart Parking</h1>
-            <p style="margin: 0; color: #9ca3af">
-              Dashboard quản lý bãi xe – demo kết nối với API FastAPI.
-            </p>
+            <h1 style="margin: 0">PBL5 Smart Parking Control</h1>
+            <p class="subtitle">2 cổng vào/ra, trigger cảm biến và RFID, cảnh báo cháy realtime bằng polling.</p>
           </div>
           <button id="refreshBtn">Làm mới dữ liệu</button>
-        </header>
-        <hr />
+        </div>
 
-        <section>
-          <h3>Thống kê nhanh</h3>
-          <div class="stats" id="stats">
+        <div class="component-tabs">
+          <button class="component-tab-btn active" data-component-tab="overview">Tong quan</button>
+          <button class="component-tab-btn" data-component-tab="fire">Canh bao chay</button>
+          <button class="component-tab-btn" data-component-tab="camera">Camera vao/ra</button>
+          <button class="component-tab-btn" data-component-tab="monthly">Dang ky ve thang</button>
+          <button class="component-tab-btn" data-component-tab="vehicles">Danh sach xe</button>
+        </div>
+
+        <section class="component-tab-panel active" id="component-overview">
+          <div class="stats">
             <article class="stat-card">
-              <div class="stat-label">Xe đang trong bãi</div>
+              <div class="stat-label">Xe trong bãi</div>
               <div class="stat-value" id="statInBay">-</div>
             </article>
             <article class="stat-card">
-              <div class="stat-label">Lượng vào hôm nay</div>
+              <div class="stat-label">Vào hôm nay</div>
               <div class="stat-value" id="statInToday">-</div>
             </article>
             <article class="stat-card">
-              <div class="stat-label">Lượng ra hôm nay</div>
+              <div class="stat-label">Ra hôm nay</div>
               <div class="stat-value" id="statOutToday">-</div>
             </article>
             <article class="stat-card">
-              <div class="stat-label">Doanh thu hôm nay (VND)</div>
+              <div class="stat-label">Doanh thu hôm nay</div>
               <div class="stat-value" id="statRevenue">-</div>
             </article>
           </div>
         </section>
 
-        <section style="margin-top: 2rem">
-          <h3>Webcam check-in</h3>
-          <div class="webcam-grid">
-            <div class="webcam-preview">
-              <video id="webcamVideo" autoplay playsinline></video>
-              <canvas id="webcamCanvas" width="640" height="480" style="margin-top: 0.75rem"></canvas>
-            </div>
-            <div>
-              <div style="display: flex; flex-wrap: wrap; gap: 0.5rem; margin-bottom: 0.75rem">
-                <button type="button" id="startCamBtn">Start camera</button>
-                <button type="button" id="captureBtn">Capture</button>
-                <button type="button" id="recognizeBtn">Recognize</button>
-                <button type="button" id="stopCamBtn" class="secondary">Stop</button>
-              </div>
-              <article class="stat-card">
-                <div class="stat-label">Result</div>
-                <div class="result-list" id="webcamResult">
-                  <div>action: <code>-</code></div>
-                  <div>plate: <code>-</code></div>
-                  <div>confidence: <code>-</code></div>
-                  <div>valid_plate: <code>-</code></div>
-                  <div>vehicle_type: <code>-</code></div>
-                  <div>message: <code>-</code></div>
-                </div>
-              </article>
-            </div>
+        <section class="fire-banner component-tab-panel" id="component-fire">
+          <h4 class="fire-title">Cảnh báo cháy</h4>
+          <div class="fire-list" id="fireList">
+            <div class="status-text">Chưa có cảnh báo mới.</div>
+          </div>
+          <div style="margin-top: 0.6rem; display: flex; gap: 0.5rem; flex-wrap: wrap; align-items: center">
+            <input id="fireSensorId" placeholder="sensor_id (vd: fire-1)" style="max-width: 220px" />
+            <input id="fireMessage" placeholder="Nội dung cảnh báo" style="min-width: 260px" />
+            <select id="fireLevel" style="max-width: 160px">
+              <option value="warning">warning</option>
+              <option value="critical">critical</option>
+            </select>
+            <button id="fakeFireBtn" class="secondary">Gửi cảnh báo tay</button>
           </div>
         </section>
-        <section style="margin-top: 2rem">
-          <h3>Danh sách xe</h3>
-          <form id="vehicleForm" style="margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.75rem">
-            <input id="plate" placeholder="Biển số (VD: 51F-123.45)" required />
-            <input id="owner" placeholder="Tên chủ xe" />
-            <input id="phone" placeholder="Số điện thoại" />
-            <input id="note" placeholder="Ghi chú" />
-            <button type="submit">Thêm xe</button>
-          </form>
 
+        <section class="component-tab-panel" id="component-camera">
+          <h3 class="board-title">Trung tam giam sat vao ra</h3>
+          <div class="dual-board">
+            <article class="lane" id="panel-entry">
+              <div class="lane-header">
+                <div class="lane-name">LAN VAO</div>
+                <div class="lane-sub">Cam 1 - Entry</div>
+              </div>
+
+              <div class="lane-media">
+                <div class="camera-main">
+                  <div class="box-label">Anh cho xe vao</div>
+                  <video id="video-entry" autoplay playsinline></video>
+                </div>
+                <div class="plate-preview">
+                  <div class="box-label">Anh bien so</div>
+                  <canvas id="canvas-entry" width="640" height="480"></canvas>
+                </div>
+              </div>
+
+              <div>
+                <p class="status-text" id="status-entry">Trạng thái: chờ trigger cảm biến hoặc RFID.</p>
+                <div class="controls">
+                  <button data-action="start" data-gate="entry">Start camera</button>
+                  <button data-action="stop" data-gate="entry" class="secondary">Stop camera</button>
+                  <button data-action="sensor" data-gate="entry">Sensor trigger + Scan</button>
+                </div>
+                <div class="controls" style="margin-top: 0.45rem">
+                  <input id="rfid-entry" placeholder="RFID tag cổng vào" style="min-width: 180px" />
+                  <button data-action="rfid" data-gate="entry">RFID trigger + Scan</button>
+                </div>
+                <div class="result-card" id="result-entry"></div>
+              </div>
+            </article>
+
+            <article class="lane" id="panel-exit">
+              <div class="lane-header">
+                <div class="lane-name">LAN RA</div>
+                <div class="lane-sub">Cam 2 - Exit</div>
+              </div>
+
+              <div class="lane-media">
+                <div class="camera-main">
+                  <div class="box-label">Anh cho xe ra</div>
+                  <video id="video-exit" autoplay playsinline></video>
+                </div>
+                <div class="plate-preview">
+                  <div class="box-label">Anh bien so</div>
+                  <canvas id="canvas-exit" width="640" height="480"></canvas>
+                </div>
+              </div>
+
+              <div>
+                <p class="status-text" id="status-exit">Trạng thái: chờ trigger cảm biến hoặc RFID.</p>
+                <div class="controls">
+                  <button data-action="start" data-gate="exit">Start camera</button>
+                  <button data-action="stop" data-gate="exit" class="secondary">Stop camera</button>
+                  <button data-action="sensor" data-gate="exit">Sensor trigger + Scan</button>
+                </div>
+                <div class="controls" style="margin-top: 0.45rem">
+                  <input id="rfid-exit" placeholder="RFID tag cổng ra" style="min-width: 180px" />
+                  <button data-action="rfid" data-gate="exit">RFID trigger + Scan</button>
+                </div>
+                <div class="result-card" id="result-exit"></div>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section class="component-tab-panel" id="component-monthly">
+          <h3>Dang ky ve thang</h3>
+          <form id="monthlyForm" style="margin-bottom: 0.9rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.7rem">
+            <input id="monthlyFullName" placeholder="Ho ten chu xe" required />
+            <input id="monthlyPhone" placeholder="So dien thoai" />
+            <input id="monthlyAddress" placeholder="Dia chi" />
+            <input id="monthlyPlate" placeholder="Bien so" required />
+            <input id="monthlyRfid" placeholder="RFID UID (tuỳ chọn)" />
+            <input id="monthlyStartDate" type="date" required />
+            <input id="monthlyEndDate" type="date" required />
+            <input id="monthlyVehicleNote" placeholder="Ghi chu xe" />
+            <button type="submit">Dang ky ve thang</button>
+          </form>
+          <div class="status-text" id="monthlyStatus" style="margin-bottom: 0.6rem">Nhap thong tin de tao dang ky ve thang.</div>
           <div style="overflow-x: auto">
             <table>
               <thead>
                 <tr>
-                  <th>ID</th>
-                  <th>Biển số</th>
-                  <th>Chủ xe</th>
+                  <th>Sub ID</th>
+                  <th>Chu xe</th>
                   <th>SĐT</th>
-                  <th>Ghi chú</th>
+                  <th>Bien so</th>
+                  <th>RFID</th>
+                  <th>Tu ngay</th>
+                  <th>Den ngay</th>
+                  <th>Trang thai</th>
                 </tr>
               </thead>
-              <tbody id="vehicleTableBody"></tbody>
+              <tbody id="monthlyTableBody"></tbody>
+            </table>
+          </div>
+        </section>
+
+        <section class="component-tab-panel" id="component-vehicles">
+          <h3>Lich su vao ra</h3>
+          <div style="overflow-x: auto">
+            <table>
+              <thead>
+                <tr>
+                  <th>Phien</th>
+                  <th>Biển số</th>
+                  <th>Loai ve</th>
+                  <th>Cong</th>
+                  <th>Trigger</th>
+                  <th>Vao luc</th>
+                  <th>Ra luc</th>
+                  <th>Phut gui</th>
+                  <th>Phi</th>
+                  <th>Trang thai</th>
+                </tr>
+              </thead>
+              <tbody id="parkingHistoryBody"></tbody>
             </table>
           </div>
         </section>
@@ -164,122 +431,306 @@
 
     <script>
       const API_BASE = "http://localhost:8000";
-      const webcamVideo = document.getElementById("webcamVideo");
-      const webcamCanvas = document.getElementById("webcamCanvas");
-      const webcamResult = document.getElementById("webcamResult");
-      let webcamStream = null;
-      let capturedBlob = null;
 
-      function setWebcamResult(data) {
-        if (!webcamResult) return;
-        const fields = {
-          action: data.action ?? "-",
-          plate: data.plate ?? "-",
-          confidence: data.confidence != null ? Number(data.confidence).toFixed(3) : "-",
-          valid_plate: data.valid_plate != null ? data.valid_plate : "-",
-          vehicle_type: data.vehicle_type ?? "-",
-          message: data.message ?? "-",
-        };
-        webcamResult.innerHTML = `
-          <div>action: <code>${fields.action}</code></div>
-          <div>plate: <code>${fields.plate}</code></div>
-          <div>confidence: <code>${fields.confidence}</code></div>
-          <div>valid_plate: <code>${fields.valid_plate}</code></div>
-          <div>vehicle_type: <code>${fields.vehicle_type}</code></div>
-          <div>message: <code>${fields.message}</code></div>
+      const gateState = {
+        entry: {
+          gateType: "entry",
+          video: document.getElementById("video-entry"),
+          canvas: document.getElementById("canvas-entry"),
+          result: document.getElementById("result-entry"),
+          status: document.getElementById("status-entry"),
+          rfidInput: document.getElementById("rfid-entry"),
+          stream: null,
+          capturedBlob: null,
+        },
+        exit: {
+          gateType: "exit",
+          video: document.getElementById("video-exit"),
+          canvas: document.getElementById("canvas-exit"),
+          result: document.getElementById("result-exit"),
+          status: document.getElementById("status-exit"),
+          rfidInput: document.getElementById("rfid-exit"),
+          stream: null,
+          capturedBlob: null,
+        },
+      };
+
+      function setStatus(gate, message, tone = "") {
+        const cfg = gateState[gate];
+        if (!cfg || !cfg.status) return;
+        cfg.status.className = `status-text ${tone}`.trim();
+        cfg.status.textContent = `Trạng thái: ${message}`;
+      }
+
+      function renderGateResult(gate, data = {}) {
+        const cfg = gateState[gate];
+        if (!cfg || !cfg.result) return;
+        cfg.result.innerHTML = `
+          <div class="result-row"><span>action</span><strong>${data.action ?? "-"}</strong></div>
+          <div class="result-row"><span>recognized_plate</span><strong>${data.recognized_plate ?? "-"}</strong></div>
+          <div class="result-row"><span>plate_in</span><strong>${data.plate_in ?? "-"}</strong></div>
+          <div class="result-row"><span>plate_out</span><strong>${data.plate_out ?? "-"}</strong></div>
+          <div class="result-row"><span>confidence</span><strong>${data.confidence != null ? Number(data.confidence).toFixed(3) : "-"}</strong></div>
+          <div class="result-row"><span>matched</span><strong>${data.matched ?? "-"}</strong></div>
+          <div class="result-row"><span>duration_minutes</span><strong>${data.duration_minutes ?? "-"}</strong></div>
+          <div class="result-row"><span>fee</span><strong>${data.fee != null ? Number(data.fee).toLocaleString("vi-VN") : "-"}</strong></div>
+          <div class="result-row"><span>message</span><strong>${data.message ?? "-"}</strong></div>
         `;
       }
 
-      async function startCamera() {
-        if (webcamStream) return;
+      async function startCamera(gate) {
+        const cfg = gateState[gate];
+        if (!cfg || cfg.stream) return;
         try {
-          webcamStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: "environment" },
-          });
-          webcamVideo.srcObject = webcamStream;
-          await webcamVideo.play();
+          cfg.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+          cfg.video.srcObject = cfg.stream;
+          await cfg.video.play();
+          setStatus(gate, "camera đang hoạt động", "ok");
         } catch (err) {
           console.error(err);
-          alert("Cannot access camera");
+          setStatus(gate, "không mở được camera", "danger");
         }
       }
 
-      function stopCamera() {
-        if (!webcamStream) return;
-        webcamStream.getTracks().forEach((track) => track.stop());
-        webcamStream = null;
+      function stopCamera(gate) {
+        const cfg = gateState[gate];
+        if (!cfg || !cfg.stream) return;
+        cfg.stream.getTracks().forEach((track) => track.stop());
+        cfg.stream = null;
+        setStatus(gate, "camera đã dừng");
       }
 
-      async function captureFrame() {
-        if (!webcamVideo || !webcamCanvas) return;
-        if (!webcamVideo.videoWidth) return;
-        webcamCanvas.width = webcamVideo.videoWidth;
-        webcamCanvas.height = webcamVideo.videoHeight;
-        const ctx = webcamCanvas.getContext("2d");
-        ctx.drawImage(webcamVideo, 0, 0, webcamCanvas.width, webcamCanvas.height);
-        capturedBlob = await new Promise((resolve) =>
-          webcamCanvas.toBlob(resolve, "image/jpeg", 0.9)
-        );
+      async function captureFrame(gate) {
+        const cfg = gateState[gate];
+        if (!cfg || !cfg.video.videoWidth) {
+          return null;
+        }
+        cfg.canvas.width = cfg.video.videoWidth;
+        cfg.canvas.height = cfg.video.videoHeight;
+        const ctx = cfg.canvas.getContext("2d");
+        ctx.drawImage(cfg.video, 0, 0, cfg.canvas.width, cfg.canvas.height);
+        cfg.capturedBlob = await new Promise((resolve) => cfg.canvas.toBlob(resolve, "image/jpeg", 0.92));
+        return cfg.capturedBlob;
       }
 
-      async function recognizeFromWebcam() {
+      async function waitForVideoReady(gate) {
+        const cfg = gateState[gate];
+        if (!cfg) return;
+        const video = cfg.video;
+        // Chờ tối đa 3 giây cho video có frame thật
+        for (let i = 0; i < 30; i++) {
+          if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
+            // Đợi thêm 200ms để camera auto-exposure ổn định
+            await new Promise((r) => setTimeout(r, 200));
+            return;
+          }
+          await new Promise((r) => setTimeout(r, 100));
+        }
+        console.warn("Camera chưa sẵn sàng sau 3 giây");
+      }
+
+      async function sendTrigger(gate, triggerType, rfidTag = "") {
+        const sourceId = `${gate}-${triggerType}-ui`;
+        const payload = {
+          gate_type: gate,
+          trigger_type: triggerType,
+          source_id: sourceId,
+          rfid_tag: rfidTag || null,
+        };
+        const res = await fetch(`${API_BASE}/api/gates/trigger`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.detail || "Trigger failed");
+        }
+      }
+
+      async function sendScan(gate, triggerType, blob, rfidTag = "") {
+        const sourceId = `${gate}-${triggerType}-ui`;
+        const formData = new FormData();
+        formData.append("file", blob, `${gate}-${Date.now()}.jpg`);
+        formData.append("gate_type", gate);
+        formData.append("trigger_type", triggerType);
+        formData.append("source_id", sourceId);
+        if (rfidTag) {
+          formData.append("rfid_tag", rfidTag);
+        }
+
+        const res = await fetch(`${API_BASE}/api/gates/scan`, {
+          method: "POST",
+          body: formData,
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          throw new Error(data.detail || "Scan failed");
+        }
+        return data;
+      }
+
+      async function triggerAndScan(gate, triggerType) {
+        const cfg = gateState[gate];
+        if (!cfg) return;
+
+        const rfidTag = triggerType === "rfid" ? cfg.rfidInput.value.trim() : "";
+        if (triggerType === "rfid" && !rfidTag) {
+          setStatus(gate, "nhập RFID trước khi quét", "warn");
+          return;
+        }
+
         try {
-          if (!capturedBlob) {
-            await captureFrame();
-          }
-          if (!capturedBlob) {
-            alert("No image captured");
-            return;
-          }
-          const formData = new FormData();
-          formData.append("file", capturedBlob, "capture.jpg");
-          formData.append("direction", "in");
-          formData.append("device_id", "webcam-1");
+          setStatus(gate, `đang gửi trigger ${triggerType}...`, "warn");
+          await sendTrigger(gate, triggerType, rfidTag);
 
-          const res = await fetch(API_BASE + "/api/parking/check-in", {
-            method: "POST",
-            body: formData,
-          });
-          const data = await res.json();
-          if (!res.ok) {
-            setWebcamResult({ action: "error", message: data.detail || res.status });
+          await startCamera(gate);
+          setStatus(gate, "đang chờ camera ổn định...", "warn");
+          await waitForVideoReady(gate);
+          const blob = await captureFrame(gate);
+          if (!blob) {
+            setStatus(gate, "chưa có frame từ camera", "warn");
             return;
           }
-          setWebcamResult(data);
+
+          setStatus(gate, "đang nhận diện biển số...", "warn");
+          const result = await sendScan(gate, triggerType, blob, rfidTag);
+          renderGateResult(gate, result);
+
+          if (result.action === "open") {
+            setStatus(gate, "mở cổng thành công", "ok");
+          } else {
+            setStatus(gate, "không mở cổng", "danger");
+          }
+
+          await fetchDashboard();
         } catch (err) {
           console.error(err);
-          setWebcamResult({ action: "error", message: "Request failed" });
+          setStatus(gate, err.message || "trigger/scan lỗi", "danger");
         }
       }
 
       async function fetchDashboard() {
         try {
-          const res = await fetch(API_BASE + "/api/dashboard");
-          if (!res.ok) throw new Error("HTTP " + res.status);
+          const res = await fetch(`${API_BASE}/api/dashboard`);
+          if (!res.ok) throw new Error("dashboard failed");
           const data = await res.json();
           document.getElementById("statInBay").textContent = data.total_in_bay;
           document.getElementById("statInToday").textContent = data.today_total_in;
           document.getElementById("statOutToday").textContent = data.today_total_out;
-          document.getElementById("statRevenue").textContent = data.today_revenue.toLocaleString("vi-VN");
+          document.getElementById("statRevenue").textContent = Number(data.today_revenue || 0).toLocaleString("vi-VN");
         } catch (err) {
           console.error(err);
         }
       }
 
-      async function fetchVehicles() {
+      function renderFireAlerts(alerts) {
+        const fireList = document.getElementById("fireList");
+        if (!alerts || alerts.length === 0) {
+          fireList.innerHTML = `<div class="status-text">Chưa có cảnh báo mới.</div>`;
+          return;
+        }
+
+        fireList.innerHTML = "";
+        alerts.forEach((item) => {
+          const div = document.createElement("div");
+          div.className = "fire-item";
+          div.innerHTML = `
+            <div>
+              <div><strong>${item.message}</strong></div>
+              <div style="font-size:0.8rem; color:#fecaca; margin-top:0.2rem">
+                sensor: ${item.sensor_id} | level: ${item.level} | ${new Date(item.created_at).toLocaleString("vi-VN")}
+              </div>
+            </div>
+            <div>
+              <button data-alert-ack="${item.id}" class="secondary">Đã xem</button>
+            </div>
+          `;
+          fireList.appendChild(div);
+        });
+      }
+
+      async function fetchFireAlerts() {
         try {
-          const res = await fetch(API_BASE + "/api/vehicles");
-          const vehicles = await res.json();
-          const tbody = document.getElementById("vehicleTableBody");
+          const res = await fetch(`${API_BASE}/api/fire-alerts?unacked_only=true&limit=10`);
+          if (!res.ok) throw new Error("fire fetch failed");
+          const alerts = await res.json();
+          renderFireAlerts(alerts);
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function ackFireAlert(alertId) {
+        try {
+          const res = await fetch(`${API_BASE}/api/fire-alerts/${alertId}/ack`, {
+            method: "PATCH",
+          });
+          if (!res.ok) throw new Error("ack failed");
+          await fetchFireAlerts();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      async function createFakeFireAlert() {
+        const sensorId = document.getElementById("fireSensorId").value.trim() || "fire-demo-1";
+        const level = document.getElementById("fireLevel").value;
+        const message = document.getElementById("fireMessage").value.trim() || "Phat hien khoi tai cong vao";
+        try {
+          const res = await fetch(`${API_BASE}/api/fire-alerts`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ sensor_id: sensorId, level, message }),
+          });
+          if (!res.ok) throw new Error("create fire alert failed");
+          document.getElementById("fireMessage").value = "";
+          await fetchFireAlerts();
+        } catch (err) {
+          console.error(err);
+        }
+      }
+
+      function formatDateTime(value) {
+        if (!value) return "-";
+        const dt = new Date(value);
+        if (Number.isNaN(dt.getTime())) return value;
+        return dt.toLocaleString("vi-VN");
+      }
+
+      function formatTicketType(value) {
+        if (value === "monthly") return "Ve thang";
+        return "Ve luot";
+      }
+
+      async function fetchParkingHistory() {
+        try {
+          const res = await fetch(`${API_BASE}/api/parking-history?limit=200`);
+          if (!res.ok) throw new Error("history fetch failed");
+          const rows = await res.json();
+          const tbody = document.getElementById("parkingHistoryBody");
           tbody.innerHTML = "";
-          vehicles.forEach((v) => {
+
+          if (!rows.length) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="10" class="status-text">Chua co du lieu vao/ra.</td>`;
+            tbody.appendChild(tr);
+            return;
+          }
+
+          rows.forEach((row) => {
             const tr = document.createElement("tr");
             tr.innerHTML = `
-              <td>${v.id}</td>
-              <td>${v.plate_number}</td>
-              <td>${v.owner_name || ""}</td>
-              <td>${v.phone || ""}</td>
-              <td>${v.note || ""}</td>
+              <td>${row.session_id}</td>
+              <td>${row.plate_number || ""}</td>
+              <td>${formatTicketType(row.ticket_type)}</td>
+              <td>${row.gate_type || "-"}</td>
+              <td>${row.trigger_type || "-"}</td>
+              <td>${formatDateTime(row.time_in)}</td>
+              <td>${formatDateTime(row.time_out)}</td>
+              <td>${row.duration_minutes ?? "-"}</td>
+              <td>${Number(row.fee || 0).toLocaleString("vi-VN")}</td>
+              <td>${row.match_status || "-"}</td>
             `;
             tbody.appendChild(tr);
           });
@@ -288,58 +739,156 @@
         }
       }
 
-      async function createVehicle(evt) {
-        evt.preventDefault();
-        const plate = document.getElementById("plate").value.trim();
-        const owner = document.getElementById("owner").value.trim();
-        const phone = document.getElementById("phone").value.trim();
-        const note = document.getElementById("note").value.trim();
-        if (!plate) return;
-
+      async function fetchMonthlyRegistrations() {
         try {
-          const res = await fetch(API_BASE + "/api/vehicles", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              plate_number: plate,
-              owner_name: owner || null,
-              phone: phone || null,
-              note: note || null,
-            }),
-          });
-          if (!res.ok) {
-            const errData = await res.json();
-            alert("Lá»—i: " + (errData.detail || res.status));
+          const res = await fetch(`${API_BASE}/api/monthly-registrations`);
+          if (!res.ok) throw new Error("monthly registrations failed");
+          const items = await res.json();
+          const tbody = document.getElementById("monthlyTableBody");
+          tbody.innerHTML = "";
+
+          if (!items.length) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="8" class="status-text">Chua co dang ky ve thang.</td>`;
+            tbody.appendChild(tr);
             return;
           }
-          document.getElementById("vehicleForm").reset();
-          await fetchVehicles();
+
+          items.forEach((item) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+              <td>${item.subscription_id}</td>
+              <td>${item.monthly_user_name || ""}</td>
+              <td>${item.monthly_user_phone || ""}</td>
+              <td>${item.plate_number || ""}</td>
+              <td>${item.rfid_card_uid || "-"}</td>
+              <td>${item.start_date || ""}</td>
+              <td>${item.end_date || ""}</td>
+              <td>${item.is_active ? "Con han" : "Het han"}</td>
+            `;
+            tbody.appendChild(tr);
+          });
         } catch (err) {
           console.error(err);
-          alert("KhÃ´ng thá»ƒ káº¿t ná»‘i API");
         }
       }
 
-      document.getElementById("vehicleForm").addEventListener("submit", createVehicle);
-      document.getElementById("refreshBtn").addEventListener("click", () => {
-        fetchDashboard();
-        fetchVehicles();
-      });
-      const startCamBtn = document.getElementById("startCamBtn");
-      const captureBtn = document.getElementById("captureBtn");
-      const recognizeBtn = document.getElementById("recognizeBtn");
-      const stopCamBtn = document.getElementById("stopCamBtn");
+      async function createMonthlyRegistration(evt) {
+        evt.preventDefault();
 
-      if (startCamBtn) startCamBtn.addEventListener("click", startCamera);
-      if (captureBtn) captureBtn.addEventListener("click", captureFrame);
-      if (recognizeBtn) recognizeBtn.addEventListener("click", recognizeFromWebcam);
-      if (stopCamBtn) stopCamBtn.addEventListener("click", stopCamera);
+        const payload = {
+          full_name: document.getElementById("monthlyFullName").value.trim(),
+          phone: document.getElementById("monthlyPhone").value.trim() || null,
+          address: document.getElementById("monthlyAddress").value.trim() || null,
+          plate_number: document.getElementById("monthlyPlate").value.trim(),
+          vehicle_note: document.getElementById("monthlyVehicleNote").value.trim() || null,
+          start_date: document.getElementById("monthlyStartDate").value,
+          end_date: document.getElementById("monthlyEndDate").value,
+          rfid_card_uid: document.getElementById("monthlyRfid").value.trim() || null,
+        };
+
+        const statusEl = document.getElementById("monthlyStatus");
+        if (!payload.full_name || !payload.plate_number || !payload.start_date || !payload.end_date) {
+          statusEl.className = "status-text warn";
+          statusEl.textContent = "Can nhap du thong tin bat buoc.";
+          return;
+        }
+
+        try {
+          statusEl.className = "status-text warn";
+          statusEl.textContent = "Dang tao dang ky ve thang...";
+
+          const res = await fetch(`${API_BASE}/api/monthly-registrations`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload),
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "Dang ky ve thang that bai");
+          }
+
+          document.getElementById("monthlyForm").reset();
+          statusEl.className = "status-text ok";
+          statusEl.textContent = data.message || "Dang ky ve thang thanh cong";
+
+          await fetchMonthlyRegistrations();
+          await fetchVehicles();
+        } catch (err) {
+          console.error(err);
+          statusEl.className = "status-text danger";
+          statusEl.textContent = err.message || "Loi dang ky ve thang";
+        }
+      }
+
+      function bindGlobalActions() {
+        document.querySelectorAll("button[data-action]").forEach((btn) => {
+          btn.addEventListener("click", async () => {
+            const gate = btn.dataset.gate;
+            const action = btn.dataset.action;
+            if (action === "start") {
+              await startCamera(gate);
+            } else if (action === "stop") {
+              stopCamera(gate);
+            } else if (action === "sensor") {
+              await triggerAndScan(gate, "sensor");
+            } else if (action === "rfid") {
+              await triggerAndScan(gate, "rfid");
+            }
+          });
+        });
+
+        document.getElementById("fireList").addEventListener("click", async (evt) => {
+          const alertId = evt.target?.dataset?.alertAck;
+          if (!alertId) return;
+          await ackFireAlert(alertId);
+        });
+
+        document.getElementById("fakeFireBtn").addEventListener("click", createFakeFireAlert);
+      }
+
+      function initComponentTabs() {
+        const buttons = document.querySelectorAll(".component-tab-btn");
+        const panels = {
+          overview: document.getElementById("component-overview"),
+          fire: document.getElementById("component-fire"),
+          camera: document.getElementById("component-camera"),
+          monthly: document.getElementById("component-monthly"),
+          vehicles: document.getElementById("component-vehicles"),
+        };
+
+        buttons.forEach((btn) => {
+          btn.addEventListener("click", () => {
+            const tab = btn.dataset.componentTab;
+            if (!tab || !panels[tab]) return;
+
+            buttons.forEach((b) => b.classList.remove("active"));
+            btn.classList.add("active");
+
+            Object.values(panels).forEach((panel) => panel.classList.remove("active"));
+            panels[tab].classList.add("active");
+          });
+        });
+      }
+
+      document.getElementById("monthlyForm").addEventListener("submit", createMonthlyRegistration);
+      document.getElementById("refreshBtn").addEventListener("click", async () => {
+        await fetchDashboard();
+        await fetchMonthlyRegistrations();
+        await fetchParkingHistory();
+        await fetchFireAlerts();
+      });
+
+      initComponentTabs();
+      bindGlobalActions();
+      renderGateResult("entry", {});
+      renderGateResult("exit", {});
 
       fetchDashboard();
-      fetchVehicles();
+      fetchMonthlyRegistrations();
+      fetchParkingHistory();
+      fetchFireAlerts();
+      setInterval(fetchFireAlerts, 3000);
     </script>
   </body>
-  </html>
-
-
-
+</html>
