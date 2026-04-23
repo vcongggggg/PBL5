@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
-from . import ai_service, models, schemas
+from . import ai_service, models, schemas, camera_service
 from .database import Base, engine, get_db
 
 Base.metadata.create_all(bind=engine)
@@ -508,13 +508,30 @@ async def gate_scan(
 # ============ ESP32 ENDPOINTS ============
 @app.post("/api/esp/events", response_model=schemas.EspEventResponse)
 def handle_esp_event(payload: schemas.EspEventRequest, db: Session = Depends(get_db)):
-    detected_plate, confidence = ai_service.recognize_plate_demo()
+    """
+    ESP32 gui tin hieu xe den (IR Sensor). 
+    Backend tu dong chup anh tu Webcam va nhan dien.
+    """
+    # 1. Xac dinh camera can chup
+    cam_index = camera_service.CAMERA_IN_INDEX if payload.direction == "in" else camera_service.CAMERA_OUT_INDEX
+    
+    # 2. Chụp ảnh từ Webcam
+    image_bytes = camera_service.capture_image(cam_index)
+    
+    if image_bytes:
+        # 3. Nhận diện biển số từ ảnh vừa chụp
+        detected_plate, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
+    else:
+        # Fallback neu camera loi
+        detected_plate, confidence = ai_service.recognize_plate_demo()
+
+    # 4. Xu ly vao/ra (su dung logic san co)
     result = process_checkin_compat(
         db=db,
         plate=detected_plate,
         confidence=confidence,
         direction=payload.direction,
-        image_path=None,
+        image_path=None, # Co the luu anh vao folder uploads neu muon
     )
 
     return schemas.EspEventResponse(

@@ -2,13 +2,14 @@
 #define CONFIG_H
 
 // ================== WIFI & BACKEND ==================
-static const char *WIFI_SSID = "Galaxy A13 47BD";
-static const char *WIFI_PASS = "cong,123321";
+static const char *WIFI_SSID = "KTXQT_T1";
+static const char *WIFI_PASS = "0702712127";
 
-static const char *BACKEND_URL_EVENT = "http://10.120.151.115:8000/api/esp/events";
-static const char *BACKEND_URL_RFID = "http://10.120.151.115:8000/api/esp/rfid";
-static const char *BACKEND_URL_FIRE = "http://10.120.151.115:8000/api/esp/fire-alert";
-static const char *DEVICE_ID = "parking-node-1";
+// Thay 192.168.1.XX bang IP thuc te cua Laptop chay Backend
+static const char *BACKEND_URL_EVENT = "http://192.168.0.141:8000/api/esp/events";
+static const char *BACKEND_URL_RFID = "http://192.168.0.141:8000/api/esp/rfid";
+static const char *BACKEND_URL_FIRE = "http://192.168.0.141:8000/api/esp/fire-alert";
+static const char *DEVICE_ID = "esp32-barrier-01";
 
 // ================== PIN MAP ==================
 // Gate IN

@@ -6,7 +6,6 @@
 #include "gate_controller.h"
 #include "network_service.h"
 #include "rfid_service.h"
-
 bool prevIrIn = false;
 bool prevIrOut = false;
 bool fireAlertActive = false;
@@ -14,26 +13,29 @@ unsigned long lastFireAlertSentAt = 0;
 String lastDirectionHint = "in";
 
 void setupInputPins() {
-  pinMode(IR_IN_PIN, INPUT);
-  pinMode(IR_OUT_PIN, INPUT);
-  pinMode(FIRE_SENSOR_PIN, INPUT);
+  pinMode(IR_IN_PIN, INPUT_PULLUP);
+  pinMode(IR_OUT_PIN, INPUT_PULLUP);
+  pinMode(FIRE_SENSOR_PIN, INPUT_PULLUP);
 }
 
 void handleIrSensors() {
-  bool irInNow = digitalRead(IR_IN_PIN) == HIGH;
-  bool irOutNow = digitalRead(IR_OUT_PIN) == HIGH;
+  // Cảm biến E18-D80NK thường trả về LOW khi có vật cản
+  bool irInNow = (digitalRead(IR_IN_PIN) == LOW);
+  bool irOutNow = (digitalRead(IR_OUT_PIN) == LOW);
 
   if (irInNow && !prevIrIn) {
     lastDirectionHint = "in";
-    Serial.println("IR IN triggered");
+    Serial.println("[IR] Xe dang vao -> Trigger camera IN");
     sendCarDetected("in", "gate_in");
+    delay(500); // Debounce
   }
   prevIrIn = irInNow;
 
   if (irOutNow && !prevIrOut) {
     lastDirectionHint = "out";
-    Serial.println("IR OUT triggered");
+    Serial.println("[IR] Xe dang ra -> Trigger camera OUT");
     sendCarDetected("out", "gate_out");
+    delay(500); // Debounce
   }
   prevIrOut = irOutNow;
 }
