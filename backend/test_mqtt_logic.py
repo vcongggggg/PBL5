@@ -16,34 +16,38 @@ from app.main import app, get_vietnam_now, handle_mqtt_event, bg_process_esp_eve
 import app.models as models
 import app.main as main_module
 
-SQLALCHEMY_DATABASE_URL = "sqlite:///./test_pbl5_mqtt.db"
+SQLALCHEMY_DATABASE_URL = "sqlite:///./test_pbl5.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Ghi đè database session trong background task
-main_module.SessionLocal = TestingSessionLocal
-
 # Mock MQTT Manager để bắt các sự kiện publish lệnh gửi đi
-main_module.mqtt_manager = MagicMock()
-main_module.mqtt_manager.is_connected = True
+mock_mqtt = MagicMock()
+mock_mqtt.is_connected = True
 
 class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
     @classmethod
     def setUpClass(cls):
+        main_module.SessionLocal = TestingSessionLocal
         Base.metadata.create_all(bind=engine)
-        # Tắt cooldown cảm biến để test dễ dàng
         main_module.ESP_EVENT_COOLDOWN_SECONDS = 0
 
     @classmethod
     def tearDownClass(cls):
         Base.metadata.drop_all(bind=engine)
         try:
-            if os.path.exists("./test_pbl5_mqtt.db"):
-                os.remove("./test_pbl5_mqtt.db")
+            if os.path.exists("./test_pbl5.db"):
+                os.remove("./test_pbl5.db")
         except Exception:
             pass
 
     def setUp(self):
+        # Đảm bảo bind đúng SessionLocal và Mock cho bộ test này (tránh leak giữa các test file của pytest)
+        main_module.SessionLocal = TestingSessionLocal
+        main_module.mqtt_manager = mock_mqtt
+        mock_mqtt.reset_mock()
+        mock_mqtt.is_connected = True
+        main_module._pending_rfid_scans.clear()
+
         self.db = TestingSessionLocal()
         for table in reversed(Base.metadata.sorted_tables):
             self.db.execute(table.delete())
@@ -51,9 +55,6 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
 
         # Tạo cấu hình hệ thống ban đầu
         self.setup_system_config()
-        # Reset các biến toàn cục mock
-        main_module.mqtt_manager.reset_mock()
-        main_module._pending_rfid_scans.clear()
 
     def tearDown(self):
         self.db.close()

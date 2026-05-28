@@ -177,6 +177,33 @@ def levenshtein_distance(s1: str, s2: str) -> int:
         prev_row = curr_row
     return prev_row[-1]
 
+async def cleanup_expired_pending_scans_loop():
+    """
+    Background task chạy tuần kỳ mỗi 60 giây để dọn dẹp các PendingScan bị treo quá 2 phút.
+    Điều này giải phóng hàng đợi khi xe kích hoạt cảm biến nhưng không quẹt thẻ rồi bỏ đi.
+    """
+    while True:
+        try:
+            await asyncio.sleep(60)
+            db = SessionLocal()
+            try:
+                now_dt = get_vietnam_now()
+                cutoff = now_dt - timedelta(seconds=120)
+                # Xóa các pending scan cũ hơn 2 phút
+                deleted = db.query(models.PendingScan).filter(models.PendingScan.created_at < cutoff).delete()
+                if deleted > 0:
+                    db.commit()
+                    logger.info(f"[CLEANUP] Đã tự động dọn dẹp {deleted} pending scans hết hạn.")
+            except Exception as e:
+                logger.error(f"[CLEANUP] Lỗi khi dọn dẹp pending scans: {e}")
+                db.rollback()
+            finally:
+                db.close()
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"[CLEANUP] Lỗi ngoài dự kiến: {e}")
+
 @app.on_event("startup")
 async def startup_event():
     # Khởi chạy client MQTT
@@ -193,6 +220,9 @@ async def startup_event():
         
     mqtt_manager.init_app(loop, broker_host=mqtt_host, broker_port=mqtt_port)
     mqtt_manager.start()
+
+    # Kích hoạt task dọn dẹp chạy ngầm định kỳ
+    asyncio.create_task(cleanup_expired_pending_scans_loop())
 
 @app.on_event("shutdown")
 def shutdown_event():
@@ -1951,6 +1981,46 @@ def list_monthly_registrations(db: Session = Depends(get_db)):
         )
 
     return items
+
+
+@app.delete("/api/monthly-registrations/{subscription_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_monthly_registration(subscription_id: int, db: Session = Depends(get_db)):
+    """
+    Xóa một lượt đăng ký vé tháng.
+    Tự động hoàn trả trạng thái của thẻ RFID tương ứng về 'available' và giải phóng thông tin liên kết.
+    """
+    sub = db.query(models.Subscription).get(subscription_id)
+    if not sub:
+        raise HTTPException(status_code=404, detail="Không tìm thấy thông tin đăng ký vé tháng")
+
+    # Tìm thẻ RFID tương ứng được gán cho lượt đăng ký này
+    card = (
+        db.query(models.RFIDCard)
+        .filter(
+            models.RFIDCard.card_type == "monthly",
+            models.RFIDCard.monthly_user_id == sub.monthly_user_id,
+            models.RFIDCard.vehicle_id == sub.vehicle_id,
+        )
+        .first()
+    )
+
+    if card:
+        # Giải phóng thẻ RFID trở lại dạng guest
+        card.card_type = "guest"
+        card.monthly_user_id = None
+        card.vehicle_id = None
+        card.expired_at = None
+        card.is_active = True
+        card.status = "available"
+
+    # Giải phóng thông tin chủ xe trong bảng Vehicles
+    if sub.vehicle:
+        sub.vehicle.owner_name = None
+        sub.vehicle.phone = None
+
+    db.delete(sub)
+    db.commit()
+    return
 
 
 # ============ MONTHLY USERS ============
