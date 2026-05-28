@@ -6,6 +6,7 @@ extern char backend_ip[40];
 void connectWifi();
 bool isWifiConnected();
 void checkWifiReconnect();
+void updateBackendIp(String new_ip);
 
 #endif
 

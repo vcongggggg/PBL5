@@ -9,6 +9,13 @@
 #include "rfid_service.h"
 #include "buzzer_service.h"
 
+// Global variables
+bool prevIrIn = false;
+bool prevIrOut = false;
+bool fireAlertActive = false;
+unsigned long lastFireAlertSentAt = 0;
+String lastDirectionHint = "in";
+
 WebServer server(80);
 
 void handleOpenGate() {
@@ -39,19 +46,23 @@ void handleResetFire() {
   server.send(200, "text/plain", "Fire alarm reset OK");
 }
 
+void handleSetIP() {
+  if (server.hasArg("ip")) {
+    String new_ip = server.arg("ip");
+    updateBackendIp(new_ip);
+    server.send(200, "text/plain", "Backend IP successfully updated to: " + new_ip);
+  } else {
+    server.send(400, "text/plain", "Missing ip parameter");
+  }
+}
+
 void setupWebServer() {
   server.on("/open-gate", handleOpenGate);
   server.on("/reset-fire", handleResetFire);
+  server.on("/set-ip", handleSetIP);
   server.begin();
   Serial.println("ESP32 WebServer started on port 80");
 }
-
-bool prevIrIn = false;
-bool prevIrOut = false;
-bool fireAlertActive = false;
-unsigned long lastFireAlertSentAt = 0;
-String lastDirectionHint = "in";
-
 void setupInputPins() {
   pinMode(IR_IN_PIN, INPUT_PULLUP);
   pinMode(IR_OUT_PIN, INPUT_PULLUP);
@@ -103,7 +114,7 @@ void handleRfid() {
 
 void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
-  bool fireDetected = (fireValue == HIGH);
+  bool fireDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
 
   if (fireDetected && !fireAlertActive) {
     fireAlertActive = true;

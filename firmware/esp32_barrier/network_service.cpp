@@ -68,3 +68,15 @@ void checkWifiReconnect() {
     connectWifi();
   }
 }
+
+void updateBackendIp(String new_ip) {
+  new_ip.trim();
+  if (new_ip.length() > 0) {
+    new_ip.toCharArray(backend_ip, 40);
+    Preferences prefs;
+    prefs.begin("parking", false);
+    prefs.putString("backend_ip", new_ip);
+    prefs.end();
+    Serial.printf("[WIFI] Dynamically updated and saved new Backend IP: %s\n", backend_ip);
+  }
+}

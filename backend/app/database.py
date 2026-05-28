@@ -4,16 +4,20 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 # Cấu hình MySQL cho SQLAlchemy.
 # Sửa lại USER, PASSWORD, HOST, PORT, DB_NAME cho phù hợp.
 MYSQL_USER = "root"
-MYSQL_PASSWORD = "minh2305178"
+MYSQL_PASSWORD = "123456789"
 MYSQL_HOST = "127.0.0.1"
 MYSQL_PORT = 3306
 MYSQL_DB = "pbl5"
 
-SQLALCHEMY_DATABASE_URL = (
-    f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}"
-)
+# SQLALCHEMY_DATABASE_URL = (
+#     f"mysql+pymysql://{MYSQL_USER}:{MYSQL_PASSWORD}@{MYSQL_HOST}:{MYSQL_PORT}/{MYSQL_DB}"
+# )
+SQLALCHEMY_DATABASE_URL = "sqlite:///./pbl5.db"
 
-engine = create_engine(SQLALCHEMY_DATABASE_URL, pool_pre_ping=True)
+# For SQLite, check_same_thread needs to be False
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False}
+)
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

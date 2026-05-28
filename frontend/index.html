@@ -537,6 +537,7 @@ Xuất Báo Cáo (CSV)
 
         cfg.result.innerHTML = `
           <div class="flex justify-between py-1 border-b border-border-subtle/50"><span class="text-on-surface-variant">Action</span><strong>${data.action ?? "-"}</strong></div>
+          <div class="flex justify-between py-1 border-b border-border-subtle/50"><span class="text-on-surface-variant">Mã thẻ RFID</span><strong class="font-mono text-warning">${data.rfid_tag ?? "-"}</strong></div>
           <div class="flex justify-between py-1 border-b border-border-subtle/50"><span class="text-on-surface-variant">Biển số nhận diện</span><strong class="font-mono text-primary">${data.recognized_plate ?? "-"}</strong></div>
           <div class="flex justify-between py-1 border-b border-border-subtle/50"><span class="text-on-surface-variant">Biển số vào</span><strong class="font-mono">${data.plate_in ?? "-"}</strong></div>
           <div class="flex justify-between py-1 border-b border-border-subtle/50"><span class="text-on-surface-variant">Biển số ra</span><strong class="font-mono">${data.plate_out ?? "-"}</strong></div>
@@ -1040,6 +1041,52 @@ Xuất Báo Cáo (CSV)
           if (payload.event === "parking_update") {
             fetchDashboard();
             fetchParkingHistory();
+            
+            const d = payload.data || {};
+            const gate = d.gate_type === "entry" ? "entry" : "exit";
+            
+            // Tự động điền mã RFID đã quẹt vào ô nhập liệu trên giao diện
+            if (d.rfid_tag) {
+              const cfg = gateState[gate];
+              if (cfg && cfg.rfidInput) {
+                cfg.rfidInput.value = d.rfid_tag;
+              }
+            }
+
+            if (d.action === "open" || d.action === "open_manual") {
+              setStatus(gate, d.message || "Mở cổng thành công", "ok");
+            } else {
+              setStatus(gate, d.message || "Không mở cổng", "danger");
+            }
+            
+            renderGateResult(gate, {
+              action: d.action,
+              rfid_tag: d.rfid_tag,
+              recognized_plate: d.plate,
+              plate_in: d.gate_type === "entry" ? d.plate : d.plate_in,
+              plate_out: d.gate_type === "exit" ? d.plate : d.plate_out,
+              confidence: d.confidence,
+              matched: d.action === "open",
+              duration_minutes: d.duration_minutes,
+              fee: d.fee,
+              message: d.message || "Đã xử lý",
+            });
+
+            // Auto-clear: Sau khi cổng mở thành công, đợi 8 giây rồi xoá dữ liệu cũ, sẵn sàng xe mới
+            if (d.action === "open" || d.action === "open_manual") {
+              // Huỷ timer cũ nếu có (tránh chồng chéo)
+              if (window._gateClearTimer && window._gateClearTimer[gate]) {
+                clearTimeout(window._gateClearTimer[gate]);
+              }
+              if (!window._gateClearTimer) window._gateClearTimer = {};
+              window._gateClearTimer[gate] = setTimeout(() => {
+                renderGateResult(gate, {});
+                setStatus(gate, "Chờ xe tiếp theo...");
+                // Xoá ô RFID
+                const cfg = gateState[gate];
+                if (cfg && cfg.rfidInput) cfg.rfidInput.value = "";
+              }, 8000);
+            }
           } else if (payload.event === "fire_alert") {
             fetchFireAlerts();
             alert("CẢNH BÁO: PHÁT HIỆN HỎA HOẠN!");

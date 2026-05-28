@@ -12,153 +12,82 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 # ============ CẤU HÌNH CAMERA ============
-# Tên camera laptop để hệ thống tự động BỎ QUA nó.
-# Chạy "python check_cam_names.py" để xem tên chính xác.
-LAPTOP_CAM_NAME = "USB2.0 HD UVC WebCam"
+# Tên camera cố định cho làn vào và làn ra
+CAMERA_IN_NAME = "DV20 USB CAMERA"
+CAMERA_OUT_NAME = "GENERAL - UVC"
 
-# Chỉ số dự phòng nếu auto-detect thất bại
-CAMERA_IN_INDEX = 0
-CAMERA_OUT_INDEX = 2
+# Chỉ số dự phòng mặc định nếu tự động nhận diện thất bại
+CAMERA_IN_INDEX = 1
+CAMERA_OUT_INDEX = 0
 
 # Cho phép ghi đè index camera qua biến môi trường để cấu hình linh hoạt
 env_in = os.getenv("CAMERA_IN_INDEX")
 env_out = os.getenv("CAMERA_OUT_INDEX")
-USE_AUTO_DETECT = True
+USE_AUTO_DETECT = True  # Bật tự động nhận diện camera qua tên theo mặc định
 
 if env_in is not None and env_out is not None:
     try:
         CAMERA_IN_INDEX = int(env_in)
         CAMERA_OUT_INDEX = int(env_out)
         USE_AUTO_DETECT = False
+        logger.info(f"Đã nhận cấu hình camera từ biến môi trường: IN={CAMERA_IN_INDEX}, OUT={CAMERA_OUT_INDEX}")
     except ValueError:
         pass
 
 
 def auto_detect_camera_indices():
     """
-    Tự động tìm 2 webcam rời bằng cách loại trừ camera laptop.
-    Logic: Quét tất cả index, tìm index nào là laptop, bỏ qua nó,
-    gán 2 cái còn lại cho Làn Vào và Làn Ra.
+    Tự động tìm chỉ số camera làn vào và làn ra dựa trên tên camera cố định.
+    Sử dụng thư viện cv2_enumerate_cameras để khớp tên với OpenCV index.
     """
     global CAMERA_IN_INDEX, CAMERA_OUT_INDEX
 
     if not USE_AUTO_DETECT:
+        logger.info("Tự động nhận diện camera bị tắt. Sử dụng chỉ số cố định hoặc từ môi trường.")
         return
 
+    logger.info("Đang tự động nhận diện chỉ số camera theo tên...")
     try:
-        # Bước 1: Tìm tất cả index camera đang hoạt động
-        working_indices = []
-        for i in range(6):
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, _ = cap.read()
-                if ret:
-                    working_indices.append(i)
-                cap.release()
+        from cv2_enumerate_cameras import enumerate_cameras
+        cameras = list(enumerate_cameras())
+        logger.info("Danh sách camera phát hiện được bởi hệ thống:")
+        for c in cameras:
+            logger.info(f" - Index: {c.index}, Tên: '{c.name}', Backend: {c.backend}")
 
-        logger.info(f"Auto-detect: Camera indices hoạt động: {working_indices}")
+        found_in = None
+        found_out = None
 
-        if len(working_indices) < 2:
-            logger.warning("Auto-detect: Không đủ 2 camera. Dùng chỉ số mặc định.")
-            return
+        # DirectShow (backend = 0 hoặc c.index trong khoảng 700-799) chạy ổn định hơn trên Windows.
+        # Chúng ta sẽ ưu tiên chọn các camera có DirectShow backend (700-799), 
+        # nhưng nếu không tìm thấy thì chấp nhận bất kỳ backend nào (như MSMF 1400-1499).
+        for c in cameras:
+            name_upper = c.name.strip().upper()
+            target_in_upper = CAMERA_IN_NAME.strip().upper()
+            target_out_upper = CAMERA_OUT_NAME.strip().upper()
 
-        if len(working_indices) == 2:
-            # Chỉ có 2 camera → gán trực tiếp, không cần loại trừ
-            CAMERA_IN_INDEX = working_indices[0]
-            CAMERA_OUT_INDEX = working_indices[1]
-            logger.info(f"Auto-detect: Chỉ có 2 camera → Làn VÀO={CAMERA_IN_INDEX}, Làn RA={CAMERA_OUT_INDEX}")
-            return
+            if target_in_upper in name_upper:
+                # Ưu tiên DirectShow (700 <= c.index < 800) hoặc nếu chưa gán chỉ số nào
+                if found_in is None or (700 <= c.index < 800):
+                    found_in = c.index
+            elif target_out_upper in name_upper:
+                # Ưu tiên DirectShow (700 <= c.index < 800) hoặc nếu chưa gán chỉ số nào
+                if found_out is None or (700 <= c.index < 800):
+                    found_out = c.index
 
-        # Bước 2: Có >= 3 camera → cần tìm và loại trừ camera laptop
-        # Tắt camera laptop tạm thời qua PowerShell để xác định index của nó
-        laptop_index = _find_laptop_index(working_indices)
-
-        if laptop_index is not None:
-            logger.info(f"Auto-detect: Camera laptop ở index {laptop_index} → bỏ qua")
-            external_cams = [i for i in working_indices if i != laptop_index]
+        if found_in is not None:
+            CAMERA_IN_INDEX = found_in
+            logger.info(f"-> Đã gán thành công camera làn VÀO: '{CAMERA_IN_NAME}' -> Index: {CAMERA_IN_INDEX}")
         else:
-            logger.warning("Auto-detect: Không xác định được camera laptop. Dùng chỉ số mặc định.")
-            return
+            logger.warning(f"-> Không tìm thấy camera làn VÀO với tên chứa '{CAMERA_IN_NAME}'. Sử dụng mặc định: {CAMERA_IN_INDEX}")
 
-        if len(external_cams) >= 2:
-            CAMERA_IN_INDEX = external_cams[0]
-            CAMERA_OUT_INDEX = external_cams[1]
-            logger.info(f"Auto-detect: KẾT QUẢ → Làn VÀO={CAMERA_IN_INDEX}, Làn RA={CAMERA_OUT_INDEX}")
+        if found_out is not None:
+            CAMERA_OUT_INDEX = found_out
+            logger.info(f"-> Đã gán thành công camera làn RA: '{CAMERA_OUT_NAME}' -> Index: {CAMERA_OUT_INDEX}")
         else:
-            logger.warning("Auto-detect: Không đủ webcam rời. Dùng chỉ số mặc định.")
+            logger.warning(f"-> Không tìm thấy camera làn RA với tên chứa '{CAMERA_OUT_NAME}'. Sử dụng mặc định: {CAMERA_OUT_INDEX}")
 
     except Exception as e:
-        logger.error(f"Auto-detect thất bại: {e}. Dùng mặc định IN={CAMERA_IN_INDEX}, OUT={CAMERA_OUT_INDEX}")
-
-
-def _find_laptop_index(working_indices):
-    """
-    Xác định index của camera laptop bằng cách tạm tắt nó qua PowerShell
-    rồi kiểm tra index nào biến mất.
-    """
-    try:
-        # Thử tắt camera laptop
-        disable_cmd = (
-            f'Get-PnpDevice | Where-Object {{ $_.FriendlyName -like "*{LAPTOP_CAM_NAME}*" }} '
-            f'| Disable-PnpDevice -Confirm:$false'
-        )
-        result = subprocess.run(
-            ['powershell', '-Command', disable_cmd],
-            capture_output=True, text=True, timeout=10
-        )
-
-        if result.returncode != 0:
-            # Không có quyền Admin → dùng phương pháp dự phòng
-            logger.info("Auto-detect: Không có quyền tắt camera laptop. Dùng phương pháp dự phòng.")
-            return _find_laptop_index_fallback(working_indices)
-
-        # Đợi Windows xử lý
-        time.sleep(1)
-
-        # Quét lại xem index nào biến mất
-        still_working = []
-        for i in working_indices:
-            cap = cv2.VideoCapture(i)
-            if cap.isOpened():
-                ret, _ = cap.read()
-                if ret:
-                    still_working.append(i)
-                cap.release()
-
-        # Bật lại camera laptop ngay lập tức
-        enable_cmd = (
-            f'Get-PnpDevice | Where-Object {{ $_.FriendlyName -like "*{LAPTOP_CAM_NAME}*" }} '
-            f'| Enable-PnpDevice -Confirm:$false'
-        )
-        subprocess.run(
-            ['powershell', '-Command', enable_cmd],
-            capture_output=True, text=True, timeout=10
-        )
-        time.sleep(1)
-
-        # Index bị mất chính là camera laptop
-        disappeared = set(working_indices) - set(still_working)
-        if len(disappeared) == 1:
-            return disappeared.pop()
-
-        return None
-
-    except Exception as e:
-        logger.error(f"Lỗi khi tìm laptop camera: {e}")
-        return _find_laptop_index_fallback(working_indices)
-
-
-def _find_laptop_index_fallback(working_indices):
-    """
-    Phương pháp dự phòng: Giả định camera laptop KHÔNG nằm ở index đầu hoặc cuối.
-    Trên hầu hết máy Windows, laptop cam thường ở giữa danh sách (index 1).
-    """
-    if len(working_indices) == 3:
-        # Thử index giữa (thường là laptop)
-        middle = working_indices[1]
-        logger.info(f"Auto-detect (fallback): Giả định laptop ở index {middle}")
-        return middle
-    return None
+        logger.error(f"Lỗi khi tự động nhận diện camera qua tên: {e}. Sử dụng mặc định: IN={CAMERA_IN_INDEX}, OUT={CAMERA_OUT_INDEX}")
 
 
 # ============ CHẠY AUTO-DETECT KHI KHỞI ĐỘNG ============
