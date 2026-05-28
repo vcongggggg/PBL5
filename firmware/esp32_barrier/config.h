@@ -2,14 +2,8 @@
 #define CONFIG_H
 
 // ================== WIFI & BACKEND ==================
-static const char *WIFI_SSID = "KTXQT_T1";
-static const char *WIFI_PASS = "0702712127";
-
-// Thay 192.168.1.XX bang IP thuc te cua Laptop chay Backend
-static const char *BACKEND_URL_EVENT = "http://192.168.0.141:8000/api/esp/events";
-static const char *BACKEND_URL_RFID = "http://192.168.0.141:8000/api/esp/rfid";
-static const char *BACKEND_URL_FIRE = "http://192.168.0.141:8000/api/esp/fire-alert";
 static const char *DEVICE_ID = "esp32-barrier-01";
+static const char *API_KEY = "pbl5_secure_key_12345";
 
 // ================== PIN MAP ==================
 // Gate IN
@@ -28,6 +22,9 @@ static const int RELAY_CH2_PIN = 25;
 // RFID RC522 (SPI)
 static const int RFID_SS_PIN = 5;
 static const int RFID_RST_PIN = 22;
+
+// Buzzer
+static const int BUZZER_PIN = 4;
 
 // ================== BEHAVIOR ==================
 static const int ANGLE_CLOSED = 0;

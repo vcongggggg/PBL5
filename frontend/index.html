@@ -175,11 +175,15 @@
 <main class="ml-[260px] pt-24 p-gutter min-h-screen">
 <!-- Dashboard / Overview Panel -->
 <div class="space-y-stack-lg" id="panel-dashboard">
-<div class="flex justify-between items-end mb-4">
+<div class="flex justify-between items-center mb-4">
 <div>
 <h2 class="text-headline-md font-headline-md text-on-surface">Tổng quan hệ thống</h2>
 <p class="text-body-sm text-on-surface-variant">Dữ liệu bãi xe hôm nay.</p>
 </div>
+<button id="btnExportCSV" class="bg-primary text-white hover:opacity-90 px-4 py-2.5 rounded-lg flex items-center gap-2 text-label-sm font-bold shadow transition-opacity cursor-pointer">
+<span class="material-symbols-outlined text-sm">download</span>
+Xuất Báo Cáo (CSV)
+</button>
 </div>
 
 <!-- Stats Bento Grid -->
@@ -189,7 +193,10 @@
 <span class="material-symbols-outlined text-6xl" style="font-variation-settings: 'FILL' 1;">directions_car</span>
 </div>
 <span class="text-label-caps text-on-surface-variant">Xe Trong Bãi</span>
+<div class="flex items-baseline gap-2">
 <span id="statInBay" class="text-display-lg font-display-lg text-primary">-</span>
+<span id="statCapacityText" class="text-body-sm text-on-surface-variant">/ - chỗ</span>
+</div>
 </div>
 
 <div class="bg-surface p-stack-lg rounded-xl border border-border-subtle shadow-sm flex flex-col gap-2 relative overflow-hidden group">
@@ -234,7 +241,7 @@
             </div>
         </div>
     </div>
-    <!-- Fake Fire Form -->
+    <!-- Fake Fire Form + Reset -->
     <div class="mt-2 pt-4 border-t border-error/20 flex gap-4 items-center flex-wrap">
         <input id="fireSensorId" placeholder="sensor_id (vd: fire-1)" class="border-error/30 bg-white/50 focus:ring-error focus:border-error rounded text-body-sm px-3 py-1.5" />
         <input id="fireMessage" placeholder="Nội dung cảnh báo" class="border-error/30 bg-white/50 focus:ring-error focus:border-error rounded text-body-sm px-3 py-1.5 flex-1" />
@@ -244,6 +251,10 @@
         </select>
         <button id="fakeFireBtn" class="bg-error text-on-error px-4 py-1.5 rounded text-label-sm font-bold shadow hover:opacity-90 transition-opacity">
             Gửi cảnh báo
+        </button>
+        <button id="resetFireBtn" class="bg-warning text-white px-4 py-1.5 rounded text-label-sm font-bold shadow hover:opacity-90 transition-opacity flex items-center gap-1">
+            <span class="material-symbols-outlined text-sm">restart_alt</span>
+            Reset Báo Động Cháy
         </button>
     </div>
 </div>
@@ -262,7 +273,7 @@
 <span class="font-bold tracking-tight">LAN VAO - CHÍNH</span>
 </div>
 <div class="aspect-video bg-black flex items-center justify-center relative group">
-    <video id="video-entry" autoplay playsinline class="w-full h-full object-cover"></video>
+    <img id="video-entry" src="" class="w-full h-full object-cover" />
 </div>
 <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6 bg-surface-container-lowest">
 <div class="md:col-span-1 space-y-4">
@@ -281,6 +292,9 @@
         </button>
         <button data-action="sensor" data-gate="entry" class="w-full py-2 bg-success text-on-primary rounded-lg text-label-sm font-bold flex items-center justify-center gap-2 hover:bg-success/90">
             Sensor Trigger
+        </button>
+        <button data-action="manual-open" data-gate="entry" class="w-full py-2 bg-danger text-on-primary rounded-lg text-label-sm font-bold flex items-center justify-center gap-2 hover:bg-danger/90">
+            Mở Cổng (Manual)
         </button>
         <div class="flex gap-2">
             <input id="rfid-entry" placeholder="RFID tag" class="w-2/3 border-border-subtle rounded text-body-sm px-2 py-1" />
@@ -303,7 +317,7 @@
 <span class="font-bold tracking-tight">LAN RA - CHÍNH</span>
 </div>
 <div class="aspect-video bg-black flex items-center justify-center relative group">
-    <video id="video-exit" autoplay playsinline class="w-full h-full object-cover"></video>
+    <img id="video-exit" src="" class="w-full h-full object-cover" />
 </div>
 <div class="p-6 grid grid-cols-1 md:grid-cols-3 gap-6 bg-surface-container-lowest">
 <div class="md:col-span-1 space-y-4">
@@ -322,6 +336,9 @@
         </button>
         <button data-action="sensor" data-gate="exit" class="w-full py-2 bg-success text-on-primary rounded-lg text-label-sm font-bold flex items-center justify-center gap-2 hover:bg-success/90">
             Sensor Trigger
+        </button>
+        <button data-action="manual-open" data-gate="exit" class="w-full py-2 bg-danger text-on-primary rounded-lg text-label-sm font-bold flex items-center justify-center gap-2 hover:bg-danger/90">
+            Mở Cổng (Manual)
         </button>
         <div class="flex gap-2">
             <input id="rfid-exit" placeholder="RFID tag" class="w-2/3 border-border-subtle rounded text-body-sm px-2 py-1" />
@@ -418,6 +435,39 @@
 
 <!-- Parking History Panel -->
 <div class="hidden space-y-stack-lg" id="panel-history">
+
+<!-- Force Checkout Panel -->
+<div class="bg-surface rounded-xl border-2 border-warning border-dashed shadow-sm p-6">
+    <div class="flex items-center gap-3 mb-4">
+        <div class="bg-warning text-white w-10 h-10 rounded-lg flex items-center justify-center">
+            <span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">search</span>
+        </div>
+        <div>
+            <h3 class="text-title-sm font-bold">Checkout thủ công (Mất thẻ / Xe kẹt)</h3>
+            <p class="text-body-sm text-on-surface-variant">Tìm xe theo biển số, tính phí và mở cổng ra.</p>
+        </div>
+    </div>
+    <div class="flex gap-4 items-end flex-wrap">
+        <div class="flex-1 min-w-[200px]">
+            <label class="block text-label-sm mb-1">Biển số xe</label>
+            <input id="forceCheckoutPlate" type="text" placeholder="Nhập biển số (VD: 43A12345)" class="w-full border-border-subtle rounded-lg text-body-sm focus:ring-warning focus:border-warning font-mono uppercase" />
+        </div>
+        <div>
+            <label class="block text-label-sm mb-1">Lý do</label>
+            <select id="forceCheckoutReason" class="border-border-subtle rounded-lg text-body-sm focus:ring-warning focus:border-warning">
+                <option value="lost_card">Mất thẻ RFID</option>
+                <option value="system_error">Lỗi hệ thống</option>
+                <option value="manual_override">Bảo vệ xử lý</option>
+            </select>
+        </div>
+        <button id="forceCheckoutBtn" class="bg-warning text-white px-6 py-2.5 rounded-lg text-label-sm font-bold shadow hover:opacity-90 transition-opacity flex items-center gap-2">
+            <span class="material-symbols-outlined text-sm">output</span>
+            Checkout + Mở cổng
+        </button>
+    </div>
+    <div id="forceCheckoutResult" class="mt-3 text-label-sm font-bold"></div>
+</div>
+
 <div class="bg-surface rounded-xl border border-border-subtle shadow-sm overflow-hidden">
 <div class="px-6 py-4 border-b border-border-subtle flex justify-between items-center bg-surface-container-lowest">
 <h2 class="text-title-sm font-bold">Lịch sử vào/ra chi tiết</h2>
@@ -453,23 +503,15 @@
       const gateState = {
         entry: {
           gateType: "entry",
-          video: document.getElementById("video-entry"),
-          canvas: document.getElementById("canvas-entry"),
           result: document.getElementById("result-entry"),
           status: document.getElementById("status-entry"),
           rfidInput: document.getElementById("rfid-entry"),
-          stream: null,
-          capturedBlob: null,
         },
         exit: {
           gateType: "exit",
-          video: document.getElementById("video-exit"),
-          canvas: document.getElementById("canvas-exit"),
           result: document.getElementById("result-exit"),
           status: document.getElementById("status-exit"),
           rfidInput: document.getElementById("rfid-exit"),
-          stream: null,
-          capturedBlob: null,
         },
       };
 
@@ -507,52 +549,20 @@
       }
 
       async function startCamera(gate) {
-        const cfg = gateState[gate];
-        if (!cfg || cfg.stream) return;
-        try {
-          cfg.stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-          cfg.video.srcObject = cfg.stream;
-          await cfg.video.play();
-          setStatus(gate, "camera đang hoạt động", "ok");
-        } catch (err) {
-          console.error(err);
-          setStatus(gate, "không mở được camera", "danger");
+        const img = document.getElementById(`video-${gate}`);
+        if (img) {
+          // Thêm timestamp để tránh cache trình duyệt
+          img.src = `${API_BASE}/api/camera/stream/${gate}?t=${Date.now()}`;
         }
+        setStatus(gate, "Backend Stream đang chạy", "ok");
       }
 
       function stopCamera(gate) {
-        const cfg = gateState[gate];
-        if (!cfg || !cfg.stream) return;
-        cfg.stream.getTracks().forEach((track) => track.stop());
-        cfg.stream = null;
-        setStatus(gate, "camera đã dừng");
-      }
-
-      async function captureFrame(gate) {
-        const cfg = gateState[gate];
-        if (!cfg || !cfg.video.videoWidth) {
-          return null;
+        const img = document.getElementById(`video-${gate}`);
+        if (img) {
+          img.src = "";
         }
-        cfg.canvas.width = cfg.video.videoWidth;
-        cfg.canvas.height = cfg.video.videoHeight;
-        const ctx = cfg.canvas.getContext("2d");
-        ctx.drawImage(cfg.video, 0, 0, cfg.canvas.width, cfg.canvas.height);
-        cfg.capturedBlob = await new Promise((resolve) => cfg.canvas.toBlob(resolve, "image/jpeg", 0.92));
-        return cfg.capturedBlob;
-      }
-
-      async function waitForVideoReady(gate) {
-        const cfg = gateState[gate];
-        if (!cfg) return;
-        const video = cfg.video;
-        for (let i = 0; i < 30; i++) {
-          if (video.videoWidth > 0 && video.videoHeight > 0 && video.readyState >= 2) {
-            await new Promise((r) => setTimeout(r, 200));
-            return;
-          }
-          await new Promise((r) => setTimeout(r, 100));
-        }
-        console.warn("Camera chưa sẵn sàng sau 3 giây");
+        setStatus(gate, "Camera đã dừng");
       }
 
       async function sendTrigger(gate, triggerType, rfidTag = "") {
@@ -574,10 +584,9 @@
         }
       }
 
-      async function sendScan(gate, triggerType, blob, rfidTag = "") {
+      async function sendScan(gate, triggerType, rfidTag = "") {
         const sourceId = `${gate}-${triggerType}-ui`;
         const formData = new FormData();
-        formData.append("file", blob, `${gate}-${Date.now()}.jpg`);
         formData.append("gate_type", gate);
         formData.append("trigger_type", triggerType);
         formData.append("source_id", sourceId);
@@ -585,7 +594,7 @@
           formData.append("rfid_tag", rfidTag);
         }
 
-        const res = await fetch(`${API_BASE}/api/gates/scan`, {
+        const res = await fetch(`${API_BASE}/api/gates/scan-from-cam`, {
           method: "POST",
           body: formData,
         });
@@ -610,29 +619,45 @@
           setStatus(gate, `đang gửi trigger ${triggerType}...`, "warn");
           await sendTrigger(gate, triggerType, rfidTag);
 
-          await startCamera(gate);
-          setStatus(gate, "đang chờ camera ổn định...", "warn");
-          await waitForVideoReady(gate);
-          const blob = await captureFrame(gate);
-          if (!blob) {
-            setStatus(gate, "chưa có frame từ camera", "warn");
-            return;
-          }
-
           setStatus(gate, "đang nhận diện biển số...", "warn");
-          const result = await sendScan(gate, triggerType, blob, rfidTag);
+          const result = await sendScan(gate, triggerType, rfidTag);
           renderGateResult(gate, result);
 
           if (result.action === "open") {
             setStatus(gate, "mở cổng thành công", "ok");
           } else {
-            setStatus(gate, "không mở cổng", "danger");
+            setStatus(gate, result.message || "không mở cổng", "danger");
           }
 
           await fetchDashboard();
         } catch (err) {
           console.error(err);
           setStatus(gate, err.message || "trigger/scan lỗi", "danger");
+        }
+      }
+
+      async function forceOpenGate(gate) {
+        try {
+          setStatus(gate, "Đang gửi lệnh mở cổng thủ công...", "warn");
+          const formData = new FormData();
+          formData.append("gate_type", gate);
+
+          const res = await fetch(`${API_BASE}/api/gates/force-open`, {
+            method: "POST",
+            headers: {
+              "X-API-Key": "pbl5_secure_key_12345"
+            },
+            body: formData,
+          });
+          const data = await res.json();
+          if (!res.ok) {
+            throw new Error(data.detail || "Không thể gửi lệnh mở cổng");
+          }
+          setStatus(gate, "Đã gửi lệnh mở cổng!", "ok");
+          await fetchDashboard();
+        } catch (err) {
+          console.error(err);
+          setStatus(gate, err.message || "Lỗi mở cổng bằng tay", "danger");
         }
       }
 
@@ -645,6 +670,10 @@
           document.getElementById("statInToday").textContent = data.today_total_in;
           document.getElementById("statOutToday").textContent = data.today_total_out;
           document.getElementById("statRevenue").textContent = Number(data.today_revenue || 0).toLocaleString("vi-VN") + "đ";
+          
+          const maxSlots = data.max_slots || 50;
+          const available = data.available_slots !== undefined ? data.available_slots : (maxSlots - data.total_in_bay);
+          document.getElementById("statCapacityText").textContent = `/ ${maxSlots} chỗ (Trống: ${available})`;
         } catch (err) {
           console.error(err);
         }
@@ -719,7 +748,9 @@
         if (!value) return "-";
         const dt = new Date(value);
         if (Number.isNaN(dt.getTime())) return value;
-        return dt.toLocaleString("vi-VN");
+        // Backend trả về giờ ICT (UTC+7) nhưng không có tz info
+        // Hiển thị trực tiếp không cần convert
+        return dt.toLocaleString("vi-VN", { timeZone: "Asia/Ho_Chi_Minh" });
       }
 
       function formatTicketType(value) {
@@ -869,6 +900,8 @@
               await triggerAndScan(gate, "sensor");
             } else if (action === "rfid") {
               await triggerAndScan(gate, "rfid");
+            } else if (action === "manual-open") {
+              await forceOpenGate(gate);
             }
           });
         });
@@ -880,6 +913,67 @@
         });
 
         document.getElementById("fakeFireBtn").addEventListener("click", createFakeFireAlert);
+
+        document.getElementById("resetFireBtn").addEventListener("click", async () => {
+          try {
+            const res = await fetch(`${API_BASE}/api/fire/reset`, {
+              method: "POST",
+              headers: {
+                "X-API-Key": "pbl5_secure_key_12345"
+              }
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Reset failed");
+            alert(data.message || "Đã tắt báo động cháy.");
+            await fetchFireAlerts();
+          } catch (err) {
+            console.error(err);
+            alert("Lỗi: " + (err.message || "Không thể tắt báo động"));
+          }
+        });
+
+        document.getElementById("forceCheckoutBtn").addEventListener("click", async () => {
+          const plate = document.getElementById("forceCheckoutPlate").value.trim();
+          const reason = document.getElementById("forceCheckoutReason").value;
+          const resultEl = document.getElementById("forceCheckoutResult");
+
+          if (!plate) {
+            resultEl.className = "mt-3 text-label-sm font-bold text-error";
+            resultEl.textContent = "Vui lòng nhập biển số xe.";
+            return;
+          }
+
+          try {
+            resultEl.className = "mt-3 text-label-sm font-bold text-warning";
+            resultEl.textContent = "Đang xử lý...";
+
+            const formData = new FormData();
+            formData.append("plate_number", plate);
+            formData.append("reason", reason);
+            formData.append("open_gate", "true");
+
+            const res = await fetch(`${API_BASE}/api/parking/force-checkout`, {
+              method: "POST",
+              headers: {
+                "X-API-Key": "pbl5_secure_key_12345"
+              },
+              body: formData,
+            });
+            const data = await res.json();
+            if (!res.ok) throw new Error(data.detail || "Checkout thất bại");
+
+            resultEl.className = "mt-3 text-label-sm font-bold text-success";
+            resultEl.textContent = data.message;
+            document.getElementById("forceCheckoutPlate").value = "";
+
+            await fetchDashboard();
+            await fetchParkingHistory();
+          } catch (err) {
+            console.error(err);
+            resultEl.className = "mt-3 text-label-sm font-bold text-error";
+            resultEl.textContent = err.message || "Lỗi không xác định";
+          }
+        });
       }
 
         // Global State Management (Visual Only Script for Panel Switching)
@@ -908,14 +1002,26 @@
                 });
 
                 // Show selected panel
-                const label = link.querySelector('span:last-child').textContent;
+                const label = link.querySelector('span:last-child').textContent.trim();
                 const panelId = panels[label];
                 if(panelId) {
                     document.getElementById(panelId).classList.remove('hidden');
                 }
+
+                // Control camera streaming dynamically to optimize resources
+                if (label === 'Live Monitoring') {
+                    startCamera("entry");
+                    startCamera("exit");
+                } else {
+                    stopCamera("entry");
+                    stopCamera("exit");
+                }
             });
         });
 
+      document.getElementById("btnExportCSV").addEventListener("click", () => {
+        window.location.href = `${API_BASE}/api/parking/export`;
+      });
       document.getElementById("monthlyForm").addEventListener("submit", createMonthlyRegistration);
       document.getElementById("refreshBtn").addEventListener("click", async () => {
         await fetchDashboard();
@@ -924,14 +1030,57 @@
         await fetchFireAlerts();
       });
 
-      bindGlobalActions();
-      renderGateResult("entry", {});
-      renderGateResult("exit", {});
+      function initWebSocket() {
+        const wsUrl = API_BASE.replace("http", "ws") + "/ws";
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => console.log("WebSocket connected");
+        ws.onmessage = (event) => {
+          const payload = JSON.parse(event.data);
+          if (payload.event === "parking_update") {
+            fetchDashboard();
+            fetchParkingHistory();
+          } else if (payload.event === "fire_alert") {
+            fetchFireAlerts();
+            alert("CẢNH BÁO: PHÁT HIỆN HỎA HOẠN!");
+          } else if (payload.event === "fire_reset") {
+            fetchFireAlerts();
+            alert(payload.data?.message || "Báo động cháy đã được tắt.");
+          } else if (payload.event === "pending_scan") {
+            // Hiển thị biển số đang chờ quẹt thẻ RFID trên panel monitoring
+            const d = payload.data || {};
+            const gate = d.gate_type === "entry" ? "entry" : "exit";
+            const plate = d.recognized_plate || "...";
+            const conf = d.confidence != null ? Number(d.confidence).toFixed(2) : "?";
+            setStatus(gate, `Đã nhận diện: ${plate} (${conf}) - Chờ quẹt thẻ RFID...`, "warn");
+            renderGateResult(gate, {
+              action: "pending",
+              recognized_plate: plate,
+              confidence: d.confidence,
+              message: d.message || "Chờ quẹt thẻ RFID...",
+            });
+          }
+        };
+        ws.onclose = () => setTimeout(initWebSocket, 5000);
+      }
 
-      fetchDashboard();
-      fetchMonthlyRegistrations();
-      fetchParkingHistory();
-      fetchFireAlerts();
-      setInterval(fetchFireAlerts, 3000);
+      window.onload = async () => {
+        bindGlobalActions();
+        renderGateResult("entry", {});
+        renderGateResult("exit", {});
+        
+        // Cổng khởi đầu là tắt cho đến khi vào tab Giám sát trực tiếp
+        stopCamera("entry");
+        stopCamera("exit");
+        
+        await fetchDashboard();
+        await fetchMonthlyRegistrations();
+        await fetchParkingHistory();
+        await fetchFireAlerts();
+        
+        initWebSocket();
+        setInterval(fetchDashboard, 30000);
+        setInterval(fetchFireAlerts, 15000);
+      };
     </script>
 </body></html>

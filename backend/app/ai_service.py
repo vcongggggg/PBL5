@@ -13,25 +13,34 @@ import logging
 import re
 from typing import Tuple
 
+# Tắt log verbose của PaddlePaddle và PaddleX trước khi import chúng
+os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+os.environ.setdefault("GLOG_v", "0")           # Tắt Google Logging (Paddle dùng glog)
+os.environ.setdefault("GLOG_minloglevel", "2")  # Chỉ hiện ERROR trở lên
+os.environ.setdefault("FLAGS_minloglevel", "2")
+os.environ.setdefault("PADDLEX_DISABLE_RICH", "1")
+
+# Tắt log của các thư viện phụ
+for lib in ["paddle", "paddleocr", "paddlex", "ppocr", "ultralytics"]:
+    logging.getLogger(lib).setLevel(logging.WARNING)
+
 import cv2
 import numpy as np
 from ultralytics import YOLO
 from paddleocr import PaddleOCR
-
-# Bỏ qua kiểm tra kết nối tới model hoster khi khởi tạo PaddleOCR (v5/PaddleX API).
-os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
 _yolo_model = None
 _ocr_reader = None
 logger = logging.getLogger(__name__)
 
 
+
 def normalize_plate(text: str) -> str:
-    """Normalize bien so: upper, bo khoang trang, loai ky tu khong hop le."""
+    """Normalize bien so: upper, bo khoang trang, loai ky tu khong hop le (bo ca dau cham va gach ngang)."""
     if not text:
         return ""
     cleaned = re.sub(r"\s+", "", text).upper()
-    cleaned = re.sub(r"[^A-Z0-9\.\-]", "", cleaned)
+    cleaned = re.sub(r"[^A-Z0-9]", "", cleaned)
     return cleaned
 
 

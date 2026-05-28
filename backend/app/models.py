@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import (
     Column,
@@ -14,6 +14,11 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 
 from .database import Base
+
+
+def _ict_now():
+    """Trả về datetime hiện tại theo ICT (UTC+7), dạng naive."""
+    return datetime.now(timezone(timedelta(hours=7))).replace(tzinfo=None)
 
 
 class Vehicle(Base):
@@ -37,7 +42,7 @@ class MonthlyUser(Base):
     full_name = Column(String(100), nullable=False)
     phone = Column(String(20), nullable=True)
     address = Column(String(255), nullable=True)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_ict_now)
 
     subscriptions = relationship("Subscription", back_populates="monthly_user")
     rfid_cards = relationship("RFIDCard", back_populates="monthly_user")
@@ -49,8 +54,9 @@ class RFIDCard(Base):
     id = Column(Integer, primary_key=True, index=True)
     card_uid = Column(String(100), unique=True, index=True, nullable=False)
     card_type = Column(String(20), nullable=False)  # monthly / guest
+    status = Column(String(20), default="available")  # available / in_use
     is_active = Column(Boolean, default=True)
-    issued_at = Column(DateTime, default=datetime.utcnow)
+    issued_at = Column(DateTime, default=_ict_now)
     expired_at = Column(DateTime, nullable=True)
     monthly_user_id = Column(Integer, ForeignKey("monthly_users.id"), nullable=True)
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
@@ -68,7 +74,7 @@ class Subscription(Base):
     monthly_user_id = Column(Integer, ForeignKey("monthly_users.id"), nullable=True)
     start_date = Column(Date, nullable=False)
     end_date = Column(Date, nullable=False)
-    registered_at = Column(DateTime, default=datetime.utcnow)
+    registered_at = Column(DateTime, default=_ict_now)
     is_active = Column(Boolean, default=True)
 
     vehicle = relationship("Vehicle", back_populates="subscriptions")
@@ -82,7 +88,7 @@ class ParkingSession(Base):
     vehicle_id = Column(Integer, ForeignKey("vehicles.id"), nullable=True)
     rfid_card_id = Column(Integer, ForeignKey("rfid_cards.id"), nullable=True)
     plate_number = Column(String(20), index=True)
-    time_in = Column(DateTime, default=datetime.utcnow)
+    time_in = Column(DateTime, default=_ict_now)
     time_out = Column(DateTime, nullable=True)
     fee = Column(Float, default=0)
     image_path = Column(String(255), nullable=True)
@@ -117,5 +123,18 @@ class FireAlert(Base):
     level = Column(String(20), default="warning")
     message = Column(String(255), nullable=False)
     is_acknowledged = Column(Boolean, default=False)
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=_ict_now)
+
+
+class PendingScan(Base):
+    __tablename__ = "pending_scans"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gate_type = Column(String(10), unique=True, index=True, nullable=False) # "entry" or "exit"
+    plate_number = Column(String(20), nullable=True)
+    confidence = Column(Float, nullable=True)
+    image_path = Column(String(255), nullable=True)
+    created_at = Column(DateTime, default=_ict_now)
+    device_id = Column(String(50), nullable=True)
+
 

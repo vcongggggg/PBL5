@@ -127,6 +127,8 @@ class DashboardStats(BaseModel):
     today_total_in: int
     today_total_out: int
     today_revenue: float
+    max_slots: int
+    available_slots: int
 
 
 class ParkingCheckoutRequest(BaseModel):
@@ -248,6 +250,7 @@ class RFIDCardCreate(RFIDCardBase):
 
 class RFIDCard(RFIDCardBase):
     id: int
+    status: Optional[str] = "available"
     is_active: bool
     issued_at: datetime
 

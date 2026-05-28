@@ -14,6 +14,7 @@ String postJson(const char *url, const String &json, int &statusCode) {
   HTTPClient http;
   http.begin(url);
   http.addHeader("Content-Type", "application/json");
+  http.addHeader("X-API-Key", API_KEY);
   statusCode = http.POST(json);
   String resp = http.getString();
   http.end();
@@ -29,7 +30,8 @@ void sendCarDetected(const String &direction, const String &gateId) {
   body += "\"gate_id\":\"" + gateId + "\"";
   body += "}";
 
-  String resp = postJson(BACKEND_URL_EVENT, body, code);
+  String url = "http://" + String(backend_ip) + ":8000/api/esp/events";
+  String resp = postJson(url.c_str(), body, code);
   Serial.printf("EVENT %s -> %d\n", direction.c_str(), code);
   Serial.println(resp);
 
@@ -42,7 +44,7 @@ void sendCarDetected(const String &direction, const String &gateId) {
   }
 }
 
-void sendRfidScan(const String &uid, const String &directionHint) {
+bool sendRfidScan(const String &uid, const String &directionHint) {
   int code;
   String gateId = (directionHint == "in") ? "gate_in" : "gate_out";
   String body = "{";
@@ -52,17 +54,20 @@ void sendRfidScan(const String &uid, const String &directionHint) {
   body += "\"gate_id\":\"" + gateId + "\"";
   body += "}";
 
-  String resp = postJson(BACKEND_URL_RFID, body, code);
+  String url = "http://" + String(backend_ip) + ":8000/api/esp/rfid";
+  String resp = postJson(url.c_str(), body, code);
   Serial.printf("RFID UID=%s -> %d\n", uid.c_str(), code);
   Serial.println(resp);
 
-  if (code == 200 && resp.indexOf("\"action\":\"open\"") != -1) {
+  bool accepted = (code == 200 && resp.indexOf("\"action\":\"open\"") != -1);
+  if (accepted) {
     if (directionHint == "in") {
       openGateIn();
     } else {
       openGateOut();
     }
   }
+  return accepted;
 }
 
 void sendFireAlert(const String &deviceId, int sensorValue) {
@@ -73,8 +78,8 @@ void sendFireAlert(const String &deviceId, int sensorValue) {
   body += "\"message\":\"Fire sensor triggered\"";
   body += "}";
 
-  String resp = postJson(BACKEND_URL_FIRE, body, code);
+  String url = "http://" + String(backend_ip) + ":8000/api/esp/fire-alert";
+  String resp = postJson(url.c_str(), body, code);
   Serial.printf("FIRE ALERT -> %d\n", code);
   Serial.println(resp);
 }
-
