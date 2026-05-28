@@ -136,5 +136,6 @@ class PendingScan(Base):
     image_path = Column(String(255), nullable=True)
     created_at = Column(DateTime, default=_ict_now)
     device_id = Column(String(50), nullable=True)
+    scan_token = Column(String(100), nullable=True)
 
 

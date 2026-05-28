@@ -4,6 +4,9 @@ import time as time_module
 import threading
 import uuid
 from typing import List, Optional, Tuple
+import logging
+
+logger = logging.getLogger("uvicorn")
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status, WebSocket, WebSocketDisconnect, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
@@ -76,6 +79,16 @@ def sync_schema() -> None:
                     continue
                 conn.execute(text(f"ALTER TABLE rfid_cards ADD COLUMN {col_name} {ddl}"))
 
+        if "pending_scans" in table_names:
+            pending_cols = {col["name"] for col in inspector.get_columns("pending_scans")}
+            required_pending_cols = {
+                "scan_token": "VARCHAR(100) NULL",
+            }
+            for col_name, ddl in required_pending_cols.items():
+                if col_name in pending_cols:
+                    continue
+                conn.execute(text(f"ALTER TABLE pending_scans ADD COLUMN {col_name} {ddl}"))
+
 
 sync_schema()
 Base.metadata.create_all(bind=engine)
@@ -92,7 +105,10 @@ class ConnectionManager:
         self.active_connections.append(websocket)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        try:
+            self.active_connections.remove(websocket)
+        except ValueError:
+            pass
 
     async def broadcast(self, message: dict):
         from fastapi.encoders import jsonable_encoder
@@ -135,6 +151,12 @@ def verify_api_key(
 
 # IP của ESP32 để điều khiển mở barrier từ xa
 esp32_ip = None
+
+import asyncio
+gate_locks = {
+    "entry": asyncio.Lock(),
+    "exit": asyncio.Lock()
+}
 
 
 def levenshtein_distance(s1: str, s2: str) -> int:
@@ -298,6 +320,7 @@ def validate_rfid_for_scan(
     trigger_type: str,
     rfid_tag: Optional[str],
     recognized_plate: str,
+    gate_type: str,
 ) -> Tuple[Optional[models.RFIDCard], Optional[str]]:
     if trigger_type != "rfid":
         return None, None
@@ -314,6 +337,8 @@ def validate_rfid_for_scan(
         return None, "The RFID da het han"
     if card.card_type not in ["monthly", "guest"]:
         return None, "Loai the RFID khong hop le"
+    if gate_type == "entry" and card.status == "in_use":
+        return None, "Thẻ đang được sử dụng bởi xe khác"
 
     if card.card_type == "monthly":
         # Lấy thông tin xe đã được đăng ký với thẻ tháng này
@@ -379,7 +404,7 @@ async def process_gate_scan(
     recognized_plate = ai_service.normalize_plate(plate_raw)
     valid_plate = ai_service.is_valid_vn_plate(recognized_plate)
     threshold = get_system_config_value(db, "plate_confidence_threshold", 0.6)
-    rfid_card, rfid_error = validate_rfid_for_scan(db, trigger_type, rfid_tag, recognized_plate)
+    rfid_card, rfid_error = validate_rfid_for_scan(db, trigger_type, rfid_tag, recognized_plate, gate_type)
     if rfid_error:
         return schemas.GateScanResponse(
             action="ignore",
@@ -487,7 +512,7 @@ async def process_gate_scan(
             )
         else:
             # Entry bị từ chối → KHÔNG tạo session, chỉ thông báo
-            ignore_msg = vehicle_msg if not has_rfid else "Không đủ điều kiện mở cổng"
+            ignore_msg = vehicle_msg or "Không đủ điều kiện mở cổng"
             await notify_clients("parking_update", {
                 "action": "ignore",
                 "gate_type": "entry",
@@ -535,11 +560,41 @@ async def process_gate_scan(
             .first()
         )
 
-    # Cho phép ra bằng thẻ RFID nếu có phiên mở tương ứng, bất kể biển số mờ/không nhận diện được
+    # Nếu là thẻ tháng và không tìm thấy open_session bằng RFID/recognized_plate (vd biển mờ/UNKNOWN), thử tìm bằng biển số đăng ký
+    if not open_session and rfid_card and rfid_card.card_type == "monthly" and rfid_card.vehicle:
+        registered_plate = ai_service.normalize_plate(rfid_card.vehicle.plate_number)
+        open_session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.plate_number == registered_plate,
+                models.ParkingSession.time_out.is_(None),
+            )
+            .order_by(models.ParkingSession.time_in.desc())
+            .first()
+        )
+
+    # Cho phép ra bằng thẻ RFID nếu có phiên mở tương ứng:
+    # - Biển số mờ/UNKNOWN/không hợp lệ nhưng RFID có session mở → cho ra (camera lỗi hoàn toàn)
+    # - Biển số nhận SAI nhưng thẻ RFID khớp session entry VÀ sai lệch ≤ 3 ký tự → cho ra
+    # - Biển số sai > 3 ký tự → từ chối dù RFID đúng (buộc bảo vệ force checkout, phòng gian lận)
     is_rfid_exit_allowed = False
-    if open_session and rfid_tag and (not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN"):
-        is_rfid_exit_allowed = True
-        logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
+    if open_session and rfid_tag:
+        if not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN":
+            # Camera hoàn toàn không đọc được biển → ưu tiên RFID
+            is_rfid_exit_allowed = True
+            logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
+        elif rfid_card and open_session.rfid_card_id and open_session.rfid_card_id == rfid_card.id:
+            # Thẻ RFID khớp chính xác session entry → kiểm tra mức sai lệch biển số
+            rfid_plate_distance = levenshtein_distance(
+                ai_service.normalize_plate(open_session.plate_number),
+                recognized_plate
+            )
+            MAX_RFID_FALLBACK_DISTANCE = 3  # Cho phép sai tối đa 3 ký tự khi RFID đúng
+            if rfid_plate_distance <= MAX_RFID_FALLBACK_DISTANCE:
+                is_rfid_exit_allowed = True
+                logger.info(f"Cho phép xe ra: RFID khớp session entry (card_id={rfid_card.id}), biển số sai {rfid_plate_distance} ký tự (≤{MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}")
+            else:
+                logger.warning(f"TỪ CHỐI xe ra: RFID đúng nhưng biển số sai quá nhiều ({rfid_plate_distance} ký tự > {MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}. Yêu cầu bảo vệ force checkout.")
 
     if (not valid_plate or confidence < threshold) and not is_rfid_exit_allowed:
         msg = "Biển số ra không hợp lệ hoặc ảnh mờ"
@@ -658,6 +713,11 @@ async def process_gate_scan(
     open_session.confidence_out = confidence
     open_session.match_status = "rfid_only" if is_rfid_exit_allowed else ("matched" if plate_distance == 0 else "fuzzy_matched")
 
+    # Cập nhật trạng thái thẻ RFID thành "available" khi ra thành công
+    rfid_card_to_release = rfid_card or get_rfid_card(db, open_session.rfid_tag)
+    if rfid_card_to_release:
+        rfid_card_to_release.status = "available"
+
     db.commit()
     db.refresh(open_session)
 
@@ -708,29 +768,36 @@ def process_checkin_compat(
     threshold = get_system_config_value(db, "plate_confidence_threshold", 0.6)
     vehicle_type, message = resolve_vehicle_type(db, plate_norm)
 
-    session = models.ParkingSession(
-        plate_number=plate_norm or "UNKNOWN",
-        time_in=get_vietnam_now(),
-        fee=0,
-        image_path=image_path,
-        gate_type="entry" if direction == "in" else "exit",
-        trigger_type="manual",
-        plate_in=plate_norm or "UNKNOWN",
-        confidence_in=confidence,
-        match_status="pending",
-    )
-    db.add(session)
-    db.commit()
-    db.refresh(session)
+    action = "open" if valid_plate and confidence >= threshold else "ignore"
+    
+    session = None
+    if action == "open":
+        session = models.ParkingSession(
+            plate_number=plate_norm or "UNKNOWN",
+            time_in=get_vietnam_now(),
+            fee=0,
+            image_path=image_path,
+            gate_type="entry" if direction == "in" else "exit",
+            trigger_type="manual",
+            plate_in=plate_norm or "UNKNOWN",
+            confidence_in=confidence,
+            match_status="pending",
+        )
+        vehicle = db.query(models.Vehicle).filter(models.Vehicle.plate_number == plate_norm).first()
+        if vehicle:
+            session.vehicle_id = vehicle.id
+        db.add(session)
+        db.commit()
+        db.refresh(session)
 
     return schemas.ParkingCheckinResponse(
-        action="open" if valid_plate and confidence >= threshold else "ignore",
+        action=action,
         plate=plate_norm or "UNKNOWN",
         confidence=confidence,
         valid_plate=valid_plate,
         vehicle_type=vehicle_type,
         message=message,
-        session_id=session.id,
+        session_id=session.id if session else None,
     )
 
 
@@ -825,86 +892,93 @@ async def bg_process_esp_event(
     direction: str,
     gate_type: str,
     cam_index: int,
-    device_id: Optional[str]
+    device_id: Optional[str],
+    scan_token: str
 ):
     """
     Xử lý chụp ảnh và nhận diện biển số bất đồng bộ trong background task.
     Giúp giải phóng luồng chính của ESP32 ngay lập tức để không bị lỗi timeout (-11)
     và luôn sẵn sàng đọc thẻ RFID.
     """
-    db_session = SessionLocal()
-    try:
-        # 1. Chụp ảnh từ Webcam
-        image_bytes = camera_service.capture_image(cam_index)
+    # 1. Chụp ảnh từ Webcam & Nhận diện (thực hiện song song, không khóa event loop/DB)
+    image_bytes = camera_service.capture_image(cam_index)
+    
+    override_plate = None
+    override_confidence = None
+    if not image_bytes:
+        detected_plate, confidence = ai_service.recognize_plate_demo()
+        override_plate = detected_plate
+        override_confidence = confidence
         
-        override_plate = None
-        override_confidence = None
-        if not image_bytes:
-            # Fallback neu camera loi / khong co camera: su dung mock plate de test luong db
-            detected_plate, confidence = ai_service.recognize_plate_demo()
-            override_plate = detected_plate
-            override_confidence = confidence
-            
-            # Tao anh gia lap
-            import numpy as np
-            import cv2
-            dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
-            cv2.putText(dummy_img, "MOCK", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
-            _, buffer = cv2.imencode('.jpg', dummy_img)
-            image_bytes = buffer.tobytes()
-        
-        if override_plate is not None:
-            plate_raw, confidence = override_plate, (override_confidence or 0.9)
-        else:
-            plate_raw, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
-        
-        recognized_plate = ai_service.normalize_plate(plate_raw)
-        
-        # Save the image first to get image_path
-        image_path = save_upload_image(image_bytes, f"esp_event_{direction}.jpg")
+        import numpy as np
+        import cv2
+        dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
+        cv2.putText(dummy_img, "MOCK", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        _, buffer = cv2.imencode('.jpg', dummy_img)
+        image_bytes = buffer.tobytes()
+    
+    if override_plate is not None:
+        plate_raw, confidence = override_plate, (override_confidence or 0.9)
+    else:
+        plate_raw, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
+    
+    recognized_plate = ai_service.normalize_plate(plate_raw)
+    image_path = save_upload_image(image_bytes, f"esp_event_{direction}.jpg")
 
-        valid_plate = ai_service.is_valid_vn_plate(recognized_plate)
-        threshold = get_system_config_value(db_session, "plate_confidence_threshold", 0.6)
+    # 2. Sử dụng lock và kiểm tra token để tránh overwrite race condition và SQLite block
+    async with gate_locks[gate_type]:
+        db_session = SessionLocal()
+        try:
+            # Kiểm tra xem có bị overwrite bởi event mới hơn không
+            pending = db_session.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).first()
+            if not pending or pending.scan_token != scan_token:
+                logger.info(f"Background task for {gate_type} superseded. Discarding results.")
+                return
 
-        # Ở làn vào, nếu biển số không hợp lệ/mờ/UNKNOWN -> Không tạo hàng đợi chờ quẹt thẻ, yêu cầu quét lại ngay
-        if gate_type == "entry" and (not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN"):
-            db_session.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
+            valid_plate = ai_service.is_valid_vn_plate(recognized_plate)
+            threshold = get_system_config_value(db_session, "plate_confidence_threshold", 0.6)
+
+            # Ở làn vào, nếu biển số không hợp lệ/mờ/UNKNOWN -> Không tạo hàng đợi chờ quẹt thẻ, yêu cầu quét lại ngay
+            if gate_type == "entry" and (not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN"):
+                db_session.delete(pending)
+                db_session.commit()
+                
+                msg = "Biển số vào không hợp lệ hoặc ảnh mờ. Vui lòng quét lại."
+                await notify_clients("parking_update", {
+                    "action": "ignore",
+                    "gate_type": "entry",
+                    "plate": recognized_plate or "UNKNOWN",
+                    "confidence": confidence,
+                    "message": msg,
+                })
+                return
+
+            # Đưa thông tin vào hàng đợi tạm chờ quẹt thẻ (Cập nhật bản ghi PROCESSING hiện có)
+            pending.plate_number = recognized_plate
+            pending.confidence = confidence
+            pending.image_path = image_path
             db_session.commit()
             
-            msg = "Biển số vào không hợp lệ hoặc ảnh mờ. Vui lòng quét lại."
-            await notify_clients("parking_update", {
-                "action": "ignore",
-                "gate_type": "entry",
-                "plate": recognized_plate or "UNKNOWN",
+            # Gửi WebSocket báo cho Frontend cập nhật UI
+            await notify_clients("pending_scan", {
+                "gate_type": gate_type,
+                "recognized_plate": recognized_plate,
                 "confidence": confidence,
-                "message": msg,
+                "message": "Chờ quẹt thẻ RFID..."
             })
-            return
-
-        # 3. Đưa thông tin vào hàng đợi tạm chờ quẹt thẻ (Database persistent)
-        db_session.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
-        
-        pending = models.PendingScan(
-            gate_type=gate_type,
-            plate_number=recognized_plate,
-            confidence=confidence,
-            image_path=image_path,
-            device_id=device_id
-        )
-        db_session.add(pending)
-        db_session.commit()
-        
-        # 4. Gửi WebSocket báo cho Frontend cập nhật UI
-        await notify_clients("pending_scan", {
-            "gate_type": gate_type,
-            "recognized_plate": recognized_plate,
-            "confidence": confidence,
-            "message": "Chờ quẹt thẻ RFID..."
-        })
-    except Exception as e:
-        logger.error(f"Lỗi khi xử lý background event: {e}")
-    finally:
-        db_session.close()
+        except Exception as e:
+            logger.error(f"Lỗi khi xử lý background event: {e}")
+            db_session.rollback()
+            # Clean up if current pending is still ours
+            try:
+                p_check = db_session.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).first()
+                if p_check and p_check.scan_token == scan_token:
+                    db_session.delete(p_check)
+                    db_session.commit()
+            except Exception as clean_err:
+                logger.error(f"Lỗi clean up pending scan: {clean_err}")
+        finally:
+            db_session.close()
 
 @app.post("/api/esp/events", response_model=schemas.EspEventResponse)
 async def handle_esp_event(
@@ -938,6 +1012,26 @@ async def handle_esp_event(
     
     _esp_event_cooldown[direction] = now
     
+    # Tạo scan_token duy nhất cho phiên quét này
+    scan_token = uuid.uuid4().hex
+    
+    # Đăng ký trạng thái PROCESSING vào database trước khi spawn background task
+    try:
+        db.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
+        pending = models.PendingScan(
+            gate_type=gate_type,
+            plate_number="PROCESSING",
+            confidence=0.0,
+            image_path=None,
+            device_id=payload.device_id,
+            scan_token=scan_token
+        )
+        db.add(pending)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error inserting PROCESSING pending scan: {e}")
+        db.rollback()
+    
     # 1. Xac dinh camera can chup
     cam_index = camera_service.CAMERA_IN_INDEX if direction == "in" else camera_service.CAMERA_OUT_INDEX
     
@@ -947,7 +1041,8 @@ async def handle_esp_event(
         direction=direction,
         gate_type=gate_type,
         cam_index=cam_index,
-        device_id=payload.device_id
+        device_id=payload.device_id,
+        scan_token=scan_token
     )
     
     return schemas.EspEventResponse(
@@ -1028,8 +1123,6 @@ async def handle_esp_rfid(
     esp32_ip = request.client.host
     
     uid_norm = payload.uid.strip().upper().replace(" ", "").replace(":", "")
-    direction = payload.direction or "in"
-    gate_type = "entry" if direction == "in" else "exit"
     
     # 1. Tự động chuyển thẻ từ whitelist cấu hình vào DB nếu chưa tồn tại
     card = get_rfid_card(db, uid_norm)
@@ -1050,16 +1143,82 @@ async def handle_esp_rfid(
             db.commit()
             db.refresh(card)
 
-    # 2. Kiểm tra xem có biển số xe đang chờ trong hàng đợi không
-    pending = (
-        db.query(models.PendingScan)
-        .filter(models.PendingScan.gate_type == gate_type)
+    # 2. Xác định hướng logic dựa trên session mở trong DB (Smart direction detection)
+    open_session = (
+        db.query(models.ParkingSession)
+        .filter(
+            models.ParkingSession.rfid_tag == uid_norm,
+            models.ParkingSession.time_out.is_(None),
+        )
+        .order_by(models.ParkingSession.time_in.desc())
         .first()
     )
-    EXPIRE_SECONDS = 45  # Tăng thời hạn hàng đợi lên 45 giây để thoải mái thao tác
+    
+    # Nếu là thẻ tháng và không tìm thấy theo RFID tag, thử tìm theo biển số xe đăng ký
+    if not open_session and card and card.card_type == "monthly" and card.vehicle:
+        registered_plate = ai_service.normalize_plate(card.vehicle.plate_number)
+        open_session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.plate_number == registered_plate,
+                models.ParkingSession.time_out.is_(None),
+            )
+            .order_by(models.ParkingSession.time_in.desc())
+            .first()
+        )
+        
+    logical_direction = "out" if open_session else "in"
+
+    # Kiểm tra hàng đợi quét biển số ở cả 2 hướng (< 45 giây)
+    pending_entry = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
+    pending_exit = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").first()
     
     now_dt = get_vietnam_now()
-    if not pending or (now_dt - pending.created_at).total_seconds() > EXPIRE_SECONDS:
+    EXPIRE_SECONDS = 45
+    
+    active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+    active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+    
+    # Giải quyết hướng thực tế dựa trên các queue có xe đang chờ
+    resolved_gate_type = None
+    if active_entry and not active_exit:
+        resolved_gate_type = "entry"
+    elif active_exit and not active_entry:
+        resolved_gate_type = "exit"
+    elif active_entry and active_exit:
+        resolved_gate_type = "entry" if logical_direction == "in" else "exit"
+    else:
+        # Fallback về hướng payload gửi lên
+        resolved_gate_type = "entry" if (payload.direction or "in") == "in" else "exit"
+
+    direction = "in" if resolved_gate_type == "entry" else "out"
+    gate_type = resolved_gate_type
+    
+    pending = active_entry if gate_type == "entry" else active_exit
+
+    # 3. Dự phòng cho cổng ra: nếu camera hỏng/không có pending_scan nhưng thẻ có open session -> Cho phép ra (UNKNOWN plate fallback)
+    if not pending and gate_type == "exit" and open_session:
+        result = await process_gate_scan(
+            db=db,
+            image_bytes=None,
+            filename=None,
+            gate_type=gate_type,
+            trigger_type="rfid",
+            source_id=payload.device_id,
+            rfid_tag=uid_norm,
+            override_plate="UNKNOWN",
+            override_confidence=0.0,
+            existing_image_path=None,
+        )
+        return schemas.EspRfidResponse(
+            action=result.action,
+            uid=uid_norm,
+            message=result.message,
+            direction=direction,
+            gate_id=payload.gate_id,
+        )
+
+    if not pending:
         return schemas.EspRfidResponse(
             action="ignore",
             uid=uid_norm,
@@ -1068,12 +1227,21 @@ async def handle_esp_rfid(
             gate_id=payload.gate_id,
         )
 
-    # 3. Lấy thông tin biển số và ảnh chụp từ DB
+    # 4. Nếu AI đang xử lý -> Trả thông báo chờ retry thay vì báo lỗi
+    if pending.plate_number == "PROCESSING":
+        return schemas.EspRfidResponse(
+            action="ignore",
+            uid=uid_norm,
+            message="Đang nhận diện biển số, vui lòng đợi 2-3 giây rồi quẹt lại",
+            direction=direction,
+            gate_id=payload.gate_id,
+        )
+
     recognized_plate = pending.plate_number
     image_path = pending.image_path
     confidence = pending.confidence
 
-    # 4. Goi process_gate_scan de thuc hien logic nghiep vu
+    # 5. Gọi process_gate_scan thực hiện logic
     result = await process_gate_scan(
         db=db,
         image_bytes=None,
@@ -1087,12 +1255,21 @@ async def handle_esp_rfid(
         existing_image_path=image_path,
     )
 
-    # 5. Xóa biển số khỏi hàng đợi tạm nếu mở cổng thành công, hoặc nếu biển số quét được không hợp lệ/mờ (để bắt buộc quét lại)
+    # 6. Xóa biển số khỏi hàng đợi tạm nếu:
+    #    - Mở cổng thành công (action="open")
+    #    - Biển số không hợp lệ hoặc ảnh mờ
+    #    - RFID bị reject (thẻ hết hạn, thẻ đang dùng, biển không khớp...)
+    #      → Phải xóa pending scan để không ảnh hưởng xe tiếp theo
     should_delete_pending = (
         result.action == "open" or 
         not result.valid_plate or 
         (result.message and "không hợp lệ" in result.message) or 
-        (result.message and "ảnh mờ" in result.message)
+        (result.message and "ảnh mờ" in result.message) or
+        (result.message and "đang được sử dụng" in result.message) or
+        (result.message and "het han" in result.message.lower()) or
+        (result.message and "khong khop" in result.message.lower()) or
+        (result.message and "khong tim thay" in result.message.lower()) or
+        (result.message and "da bi khoa" in result.message.lower())
     )
     if should_delete_pending:
         db.delete(pending)
@@ -1391,7 +1568,7 @@ def create_monthly_registration(payload: schemas.MonthlyRegistrationCreate, db: 
         monthly_user_id=monthly_user.id,
         start_date=payload.start_date,
         end_date=payload.end_date,
-        registered_at=datetime.utcnow(),
+        registered_at=get_vietnam_now(),
         is_active=active_flag,
     )
     db.add(sub)
@@ -1621,6 +1798,13 @@ async def force_checkout(
     session.fee = fee
     session.plate_out = plate_norm
     session.match_status = "force_checkout"
+
+    # Cập nhật trạng thái thẻ RFID thành "available" khi force checkout
+    if session.rfid_tag:
+        rfid_card_to_release = get_rfid_card(db, session.rfid_tag)
+        if rfid_card_to_release:
+            rfid_card_to_release.status = "available"
+
     db.commit()
     db.refresh(session)
 
@@ -1867,13 +2051,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
     total_in_bay = (
         db.query(models.ParkingSession)
-        .filter(models.ParkingSession.time_out.is_(None))
+        .filter(
+            models.ParkingSession.time_out.is_(None),
+            models.ParkingSession.match_status != "ignored"
+        )
         .count()
     )
 
     today_total_in = (
         db.query(models.ParkingSession)
-        .filter(models.ParkingSession.time_in >= start_of_day)
+        .filter(
+            models.ParkingSession.time_in >= start_of_day,
+            models.ParkingSession.match_status != "ignored"
+        )
         .count()
     )
 
@@ -1882,6 +2072,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         .filter(
             models.ParkingSession.time_out.is_not(None),
             models.ParkingSession.time_out >= start_of_day,
+            models.ParkingSession.match_status != "ignored"
         )
         .count()
     )
@@ -1891,6 +2082,7 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         .filter(
             models.ParkingSession.time_out.is_not(None),
             models.ParkingSession.time_out >= start_of_day,
+            models.ParkingSession.match_status != "ignored"
         )
     )
     total_fee = sum(row[0] or 0 for row in today_revenue)

@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <ESP32Servo.h>
 
 #include "config.h"
@@ -60,10 +61,20 @@ void handleAutoClose(bool fireAlertActive) {
   }
   unsigned long now = millis();
   if (gateInOpen && (now - gateInOpenedAt > AUTO_CLOSE_MS)) {
-    closeGateIn();
+    if (digitalRead(IR_IN_PIN) == LOW) {
+      gateInOpenedAt = now; // Delay auto-close
+      Serial.println("Gate IN auto-close deferred: IR_IN blocked");
+    } else {
+      closeGateIn();
+    }
   }
   if (gateOutOpen && (now - gateOutOpenedAt > AUTO_CLOSE_MS)) {
-    closeGateOut();
+    if (digitalRead(IR_OUT_PIN) == LOW) {
+      gateOutOpenedAt = now; // Delay auto-close
+      Serial.println("Gate OUT auto-close deferred: IR_OUT blocked");
+    } else {
+      closeGateOut();
+    }
   }
 }
 
