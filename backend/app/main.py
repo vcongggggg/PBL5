@@ -18,6 +18,7 @@ from fastapi.responses import StreamingResponse
 from . import ai_service, models, schemas, camera_service
 from .camera_service import camera_manager
 from .database import Base, engine, get_db, SessionLocal
+from .mqtt_manager import mqtt_manager
 
 Base.metadata.create_all(bind=engine)
 
@@ -176,8 +177,26 @@ def levenshtein_distance(s1: str, s2: str) -> int:
         prev_row = curr_row
     return prev_row[-1]
 
+@app.on_event("startup")
+async def startup_event():
+    # Khởi chạy client MQTT
+    loop = asyncio.get_event_loop()
+    db = SessionLocal()
+    try:
+        mqtt_host = get_config_text(db, "mqtt_broker_host", "broker.hivemq.com")
+        mqtt_port = int(get_config_text(db, "mqtt_broker_port", "1883"))
+    except Exception:
+        mqtt_host = "broker.hivemq.com"
+        mqtt_port = 1883
+    finally:
+        db.close()
+        
+    mqtt_manager.init_app(loop, broker_host=mqtt_host, broker_port=mqtt_port)
+    mqtt_manager.start()
+
 @app.on_event("shutdown")
 def shutdown_event():
+    mqtt_manager.stop()
     camera_manager.is_running = False
     camera_manager.release_all()
 
@@ -888,6 +907,250 @@ def register_esp_ip(request: Request):
 _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
 ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
 
+# Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
+# Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
+_pending_rfid_scans = {}
+
+async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate_type: str, device_id: str, direction: str):
+    recognized_plate = pending.plate_number
+    image_path = pending.image_path
+    confidence = pending.confidence
+
+    result = await process_gate_scan(
+        db=db,
+        image_bytes=None,
+        filename=None,
+        gate_type=gate_type,
+        trigger_type="rfid",
+        source_id=device_id,
+        rfid_tag=uid_norm,
+        override_plate=recognized_plate,
+        override_confidence=confidence,
+        existing_image_path=image_path,
+    )
+
+    if result.action == "open":
+        mqtt_manager.publish_open_gate(device_id, direction)
+
+    should_delete_pending = (
+        result.action == "open" or 
+        not result.valid_plate or 
+        (result.message and "không hợp lệ" in result.message) or 
+        (result.message and "ảnh mờ" in result.message) or
+        (result.message and "đang được sử dụng" in result.message) or
+        (result.message and "het han" in result.message.lower()) or
+        (result.message and "khong khop" in result.message.lower()) or
+        (result.message and "khong tim thay" in result.message.lower()) or
+        (result.message and "da bi khoa" in result.message.lower())
+    )
+    if should_delete_pending:
+        db.delete(pending)
+        db.commit()
+
+async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
+    """
+    Xử lý các sự kiện bất đồng bộ từ ESP32 qua giao thức MQTT.
+    """
+    db = SessionLocal()
+    try:
+        if event_type == "car_detected":
+            direction = payload.get("direction", "in")
+            gate_type = "entry" if direction == "in" else "exit"
+            now = time_module.time()
+
+            # Kiểm tra cooldown
+            last_time = _esp_event_cooldown.get(direction, 0)
+            if now - last_time < ESP_EVENT_COOLDOWN_SECONDS:
+                logger.info(f"MQTT IR Event {direction} ignored due to cooldown.")
+                return
+
+            _esp_event_cooldown[direction] = now
+            scan_token = uuid.uuid4().hex
+
+            # Đăng ký trạng thái PROCESSING vào database
+            try:
+                db.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
+                pending = models.PendingScan(
+                    gate_type=gate_type,
+                    plate_number="PROCESSING",
+                    confidence=0.0,
+                    image_path=None,
+                    device_id=device_id,
+                    scan_token=scan_token
+                )
+                db.add(pending)
+                db.commit()
+            except Exception as e:
+                logger.error(f"Error inserting PROCESSING pending scan in MQTT: {e}")
+                db.rollback()
+                return
+
+            cam_index = camera_service.CAMERA_IN_INDEX if direction == "in" else camera_service.CAMERA_OUT_INDEX
+
+            # Chạy trực tiếp bg_process_esp_event như một task bất đồng bộ trong event loop của FastAPI
+            asyncio.create_task(
+                bg_process_esp_event(
+                    direction=direction,
+                    gate_type=gate_type,
+                    cam_index=cam_index,
+                    device_id=device_id,
+                    scan_token=scan_token
+                )
+            )
+
+        elif event_type == "rfid_scan":
+            uid = payload.get("uid", "")
+            direction_hint = payload.get("direction", "in")
+            gate_id = payload.get("gate_id", "gate_in")
+            
+            uid_norm = uid.strip().upper().replace(" ", "").replace(":", "")
+            if not uid_norm:
+                return
+
+            # Tự động import thẻ nếu trong whitelist cấu hình
+            card = get_rfid_card(db, uid_norm)
+            if not card:
+                whitelist_raw = get_config_text(db, "rfid_uid_whitelist", "")
+                whitelist = {
+                    item.strip().upper().replace(" ", "")
+                    for item in whitelist_raw.split(",")
+                    if item.strip()
+                }
+                if uid_norm in whitelist:
+                    card = models.RFIDCard(
+                        card_uid=uid_norm,
+                        card_type="guest",
+                        is_active=True,
+                    )
+                    db.add(card)
+                    db.commit()
+                    db.refresh(card)
+
+            # Xác định hướng logic dựa trên session mở trong DB
+            open_session = (
+                db.query(models.ParkingSession)
+                .filter(
+                    models.ParkingSession.rfid_tag == uid_norm,
+                    models.ParkingSession.time_out.is_(None),
+                )
+                .order_by(models.ParkingSession.time_in.desc())
+                .first()
+            )
+            
+            # Thẻ tháng dự phòng
+            if not open_session and card and card.card_type == "monthly" and card.vehicle:
+                registered_plate = ai_service.normalize_plate(card.vehicle.plate_number)
+                open_session = (
+                    db.query(models.ParkingSession)
+                    .filter(
+                        models.ParkingSession.plate_number == registered_plate,
+                        models.ParkingSession.time_out.is_(None),
+                    )
+                    .order_by(models.ParkingSession.time_in.desc())
+                    .first()
+                )
+
+            logical_direction = "out" if open_session else "in"
+
+            # Xác định cổng thực tế
+            pending_entry = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
+            pending_exit = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").first()
+            
+            now_dt = get_vietnam_now()
+            EXPIRE_SECONDS = 45
+            
+            active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+            active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+
+            resolved_gate_type = None
+            if active_entry and not active_exit:
+                resolved_gate_type = "entry"
+            elif active_exit and not active_entry:
+                resolved_gate_type = "exit"
+            elif active_entry and active_exit:
+                resolved_gate_type = "entry" if logical_direction == "in" else "exit"
+            else:
+                resolved_gate_type = "entry" if direction_hint == "in" else "exit"
+
+            direction = "in" if resolved_gate_type == "entry" else "out"
+            gate_type = resolved_gate_type
+            
+            pending = active_entry if gate_type == "entry" else active_exit
+
+            # Nếu là cổng ra dự phòng: không có pending scan nhưng thẻ có session mở -> Cho ra luôn
+            if not pending and gate_type == "exit" and open_session:
+                result = await process_gate_scan(
+                    db=db,
+                    image_bytes=None,
+                    filename=None,
+                    gate_type=gate_type,
+                    trigger_type="rfid",
+                    source_id=device_id,
+                    rfid_tag=uid_norm,
+                    override_plate="UNKNOWN",
+                    override_confidence=0.0,
+                    existing_image_path=None,
+                )
+                if result.action == "open":
+                    mqtt_manager.publish_open_gate(device_id, direction)
+                await notify_clients("parking_update", {
+                    "action": result.action,
+                    "gate_type": gate_type,
+                    "plate": "UNKNOWN",
+                    "confidence": 0.0,
+                    "message": result.message,
+                })
+                return
+
+            if not pending:
+                await notify_clients("parking_update", {
+                    "action": "ignore",
+                    "gate_type": gate_type,
+                    "plate": "UNKNOWN",
+                    "confidence": 0.0,
+                    "message": "Vui lòng đỗ xe đúng vị trí cảm biến trước khi quẹt thẻ",
+                })
+                return
+
+            # Nếu AI vẫn đang PROCESSING -> Đưa vào hàng chờ quẹt sớm
+            if pending.plate_number == "PROCESSING":
+                logger.info(f"RFID early swipe detected for {gate_type}. Storing in _pending_rfid_scans.")
+                _pending_rfid_scans[gate_type] = (uid_norm, device_id, now_dt)
+                await notify_clients("pending_scan", {
+                    "gate_type": gate_type,
+                    "recognized_plate": "PROCESSING",
+                    "confidence": 0.0,
+                    "message": "Đang nhận dạng biển số, vui lòng giữ nguyên vị trí, cổng sẽ mở tự động..."
+                })
+                return
+
+            # Nếu đã xử lý xong AI, gọi hàm validation bình thường
+            await process_mqtt_rfid_validation(db, pending, uid_norm, gate_type, device_id, direction)
+
+        elif event_type == "fire_alert":
+            sensor_value = payload.get("sensor_value", 0)
+            message = payload.get("message", "Fire sensor triggered")
+            alert = models.FireAlert(
+                sensor_id=device_id,
+                level="critical",
+                message=message or f"Fire sensor triggered (value={sensor_value})",
+            )
+            db.add(alert)
+            db.commit()
+            db.refresh(alert)
+            
+            await notify_clients("fire_alert", {
+                "id": alert.id,
+                "sensor_id": alert.sensor_id,
+                "message": alert.message,
+                "timestamp": alert.created_at.isoformat()
+            })
+
+    except Exception as e:
+        logger.error(f"Lỗi khi xử lý handle_mqtt_event: {e}")
+    finally:
+        db.close()
+
 async def bg_process_esp_event(
     direction: str,
     gate_type: str,
@@ -966,6 +1229,18 @@ async def bg_process_esp_event(
                 "confidence": confidence,
                 "message": "Chờ quẹt thẻ RFID..."
             })
+
+            # Kiểm tra xem có thẻ RFID nào quét sớm đang đợi nhận diện biển số không
+            pending_rfid = _pending_rfid_scans.pop(gate_type, None)
+            if pending_rfid:
+                uid_norm, device_id, swipe_time = pending_rfid
+                # Chỉ xử lý nếu thời gian quẹt trong vòng 15 giây
+                if (get_vietnam_now() - swipe_time).total_seconds() <= 15:
+                    logger.info(f"Triggering deferred RFID validation for {gate_type} with card {uid_norm}")
+                    direction = "in" if gate_type == "entry" else "out"
+                    await process_mqtt_rfid_validation(db_session, pending, uid_norm, gate_type, device_id, direction)
+                else:
+                    logger.info(f"Deferred RFID scan for {gate_type} expired.")
         except Exception as e:
             logger.error(f"Lỗi khi xử lý background event: {e}")
             db_session.rollback()
@@ -1066,8 +1341,21 @@ def handle_manual_open(payload: schemas.ManualOpenRequest):
 @app.post("/api/gates/force-open")
 async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(verify_api_key)):
     """
-    API gửi lệnh mở cổng thủ công từ Web UI tới ESP32 WebServer.
+    API gửi lệnh mở cổng thủ công từ Web UI tới ESP32 (Ưu tiên qua MQTT, dự phòng qua HTTP Web Server).
     """
+    gate = "in" if gate_type == "entry" else "out"
+
+    # 1. Thử gửi lệnh qua MQTT
+    if mqtt_manager.is_connected:
+        mqtt_manager.publish_open_gate("esp32-barrier-01", gate)
+        await notify_clients("parking_update", {
+            "action": "open_manual",
+            "gate_type": gate_type,
+            "message": "Đã mở cổng thủ công thành công qua MQTT."
+        })
+        return {"status": "ok", "message": "Gate opened successfully via MQTT"}
+
+    # 2. Dự phòng: HTTP Web Server (chỉ chạy nếu ESP32 IP khả dụng)
     global esp32_ip
     if not esp32_ip:
         raise HTTPException(
@@ -1855,14 +2143,23 @@ async def force_checkout(
 @app.post("/api/fire/reset")
 async def reset_fire_alarm(api_key: str = Depends(verify_api_key)):
     """
-    Gọi ESP32 để tắt chế độ báo động cháy.
+    Gọi ESP32 để tắt chế độ báo động cháy (Ưu tiên MQTT, dự phòng HTTP).
     Chỉ bảo vệ mới được phép gọi sau khi xác nhận an toàn.
     """
+    # 1. Gửi lệnh qua MQTT
+    if mqtt_manager.is_connected:
+        mqtt_manager.publish_reset_fire("esp32-barrier-01")
+        await notify_clients("fire_reset", {
+            "message": "Đã tắt báo động cháy qua MQTT. Hệ thống trở lại trạng thái bình thường.",
+        })
+        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua MQTT."}
+
+    # 2. Gửi lệnh qua HTTP
     global esp32_ip
     if not esp32_ip:
         raise HTTPException(
             status_code=503,
-            detail="ESP32 chưa kết nối hoặc chưa cập nhật IP lên Backend.",
+            detail="ESP32 offline (cả MQTT và HTTP Web Server đều không khả dụng).",
         )
 
     import urllib.request
@@ -1885,9 +2182,9 @@ async def reset_fire_alarm(api_key: str = Depends(verify_api_key)):
 
     if code == 200:
         await notify_clients("fire_reset", {
-            "message": "Đã tắt báo động cháy. Hệ thống trở lại trạng thái bình thường.",
+            "message": "Đã tắt báo động cháy qua HTTP. Hệ thống trở lại trạng thái bình thường.",
         })
-        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công."}
+        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua HTTP."}
     else:
         raise HTTPException(
             status_code=502,

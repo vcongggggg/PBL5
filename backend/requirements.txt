@@ -13,3 +13,4 @@ paddleocr
 easyocr
 python-dotenv
 cv2-enumerate-cameras
+paho-mqtt==1.6.1

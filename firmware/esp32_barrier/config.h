@@ -5,6 +5,14 @@
 static const char *DEVICE_ID = "esp32-barrier-01";
 static const char *API_KEY = "pbl5_secure_key_12345";
 
+// ================== MQTT ==================
+static const char *MQTT_CLIENT_ID = "esp32-barrier-01";
+static const char *MQTT_TOPIC_CAR_DETECTED = "parking/device/esp32-barrier-01/event/car_detected";
+static const char *MQTT_TOPIC_RFID_SCAN = "parking/device/esp32-barrier-01/event/rfid_scan";
+static const char *MQTT_TOPIC_FIRE_ALERT = "parking/device/esp32-barrier-01/event/fire_alert";
+static const char *MQTT_TOPIC_COMMAND_OPEN = "parking/device/esp32-barrier-01/command/open_gate";
+static const char *MQTT_TOPIC_COMMAND_RESET_FIRE = "parking/device/esp32-barrier-01/command/reset_fire";
+
 // ================== PIN MAP ==================
 // Gate IN
 static const int SERVO_IN_PIN = 14;

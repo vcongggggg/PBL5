@@ -1,13 +1,11 @@
-// ESP32 Parking Barrier Controller (modular structure)
-// setup()/loop() here, services split into .h/.cpp files
+// ESP32 Parking Barrier Controller (modular structure with MQTT)
 
-#include <WebServer.h>
-#include "api_client.h"
 #include "config.h"
 #include "gate_controller.h"
 #include "network_service.h"
 #include "rfid_service.h"
 #include "buzzer_service.h"
+#include "mqtt_service.h"
 
 // Global variables
 bool prevIrIn = false;
@@ -16,53 +14,16 @@ bool fireAlertActive = false;
 unsigned long lastFireAlertSentAt = 0;
 String lastDirectionHint = "in";
 
-WebServer server(80);
-
-void handleOpenGate() {
-  if (server.hasArg("gate")) {
-    String gate = server.arg("gate");
-    Serial.printf("[WEB] Remote manual open command for gate: %s\n", gate.c_str());
-    if (gate == "in") {
-      openGateIn();
-      server.send(200, "text/plain", "Gate IN opening");
-    } else if (gate == "out") {
-      openGateOut();
-      server.send(200, "text/plain", "Gate OUT opening");
-    } else {
-      server.send(400, "text/plain", "Invalid gate param");
-    }
-  } else {
-    server.send(400, "text/plain", "Missing gate param");
-  }
-}
-
-void handleResetFire() {
-  Serial.println("[WEB] Fire alarm RESET received from Backend");
+// Hàm xử lý reset báo động cháy gọi từ mqtt_service callback
+void resetFireAlarmLocal() {
+  Serial.println("[MQTT] Yêu cầu tắt báo động cháy (Reset Fire alarm) thành công.");
   fireAlertActive = false;
   setAlertRelays(false);
   buzzerFireAlarm(false);
   closeGateIn();
   closeGateOut();
-  server.send(200, "text/plain", "Fire alarm reset OK");
 }
 
-void handleSetIP() {
-  if (server.hasArg("ip")) {
-    String new_ip = server.arg("ip");
-    updateBackendIp(new_ip);
-    server.send(200, "text/plain", "Backend IP successfully updated to: " + new_ip);
-  } else {
-    server.send(400, "text/plain", "Missing ip parameter");
-  }
-}
-
-void setupWebServer() {
-  server.on("/open-gate", handleOpenGate);
-  server.on("/reset-fire", handleResetFire);
-  server.on("/set-ip", handleSetIP);
-  server.begin();
-  Serial.println("ESP32 WebServer started on port 80");
-}
 void setupInputPins() {
   pinMode(IR_IN_PIN, INPUT_PULLUP);
   pinMode(IR_OUT_PIN, INPUT_PULLUP);
@@ -79,18 +40,18 @@ void handleIrSensors() {
 
   if (irInNow && !prevIrIn) {
     lastDirectionHint = "in";
-    Serial.println("[IR] Xe dang vao -> Trigger camera IN");
-    buzzerBeep();  // Beep 1 lần khi phát hiện xe
-    sendCarDetected("in", "gate_in");
+    Serial.println("[IR] Xe đang vào -> Kích hoạt camera cổng VÀO");
+    buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
+    publishCarDetected("in");
     delay(500); // Debounce
   }
   prevIrIn = irInNow;
 
   if (irOutNow && !prevIrOut) {
     lastDirectionHint = "out";
-    Serial.println("[IR] Xe dang ra -> Trigger camera OUT");
-    buzzerBeep();  // Beep 1 lần khi phát hiện xe
-    sendCarDetected("out", "gate_out");
+    Serial.println("[IR] Xe đang ra -> Kích hoạt camera cổng RA");
+    buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
+    publishCarDetected("out");
     delay(500); // Debounce
   }
   prevIrOut = irOutNow;
@@ -102,12 +63,8 @@ void handleRfid() {
 
   String uid = readRfidUid();
   if (uid.length() > 0) {
-    bool accepted = sendRfidScan(uid, lastDirectionHint);
-    if (accepted) {
-      buzzerDoubleBeep();  // Beep 2 lần = RFID hợp lệ
-    } else {
-      buzzerLongBeep();    // Beep dài = RFID bị từ chối
-    }
+    buzzerBeep();  // Beep 1 lần ngắn báo đã quẹt thẻ thành công
+    publishRfidScan(uid, lastDirectionHint);
     delay(500);
   }
 }
@@ -118,42 +75,39 @@ void handleFireSensor() {
 
   if (fireDetected && !fireAlertActive) {
     fireAlertActive = true;
-    Serial.println("FIRE DETECTED! Open all gates + turn on relays + ALARM");
+    Serial.println("PHÁT HIỆN HỎA HOẠN! Mở toàn bộ cổng + kích hoạt còi + đèn báo động!");
     openGateIn();
     openGateOut();
     setAlertRelays(true);
-    buzzerFireAlarm(true);  // Bật báo động liên tục
+    buzzerFireAlarm(true);  // Bật còi báo cháy liên tục
 
-    // Gửi cảnh báo lên Backend (chỉ gửi khi mới phát hiện, cooldown 10s)
+    // Gửi cảnh báo lên Backend qua MQTT (cooldown 10s)
     unsigned long now = millis();
     if (now - lastFireAlertSentAt > FIRE_ALERT_COOLDOWN_MS) {
-      sendFireAlert(DEVICE_ID, fireValue);
+      publishFireAlert(fireValue);
       lastFireAlertSentAt = now;
     }
   }
-
-  // KHÔNG tự tắt khi sensor LOW - phải chờ Backend gọi /reset-fire
-  // Điều này tránh barrier đóng mở liên tục khi khói dao động
 }
 
 void setup() {
   Serial.begin(115200);
   delay(1000);
   connectWifi();
-  setupWebServer();
+  setupMqtt();      // Khởi tạo máy chủ MQTT Client
   setupInputPins();
   initGateHardware();
   initRfid();
-  initBuzzer();  // Khởi tạo buzzer
+  initBuzzer();
 }
 
 void loop() {
-  server.handleClient();
-  checkWifiReconnect();  // Tự reconnect WiFi nếu mất kết nối
+  checkWifiReconnect();  // Kiểm tra reconnect Wi-Fi
+  loopMqtt();            // Xử lý các gói tin MQTT và giữ kết nối
   handleIrSensors();
   handleRfid();
   handleFireSensor();
   handleAutoClose(fireAlertActive);
-  handleBuzzerLoop();  // Xử lý âm thanh báo động cháy liên tục
+  handleBuzzerLoop();    // Vòng lặp điều khiển còi báo động
   delay(50);
 }
