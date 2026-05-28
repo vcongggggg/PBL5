@@ -3,6 +3,13 @@ import os
 os.environ["OPENCV_LOG_LEVEL"] = "OFF"
 os.environ["PYTHONWARNINGS"] = "ignore"
 
+# Tải cấu hình từ file .env nếu có
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 import cv2
 import threading
 import logging
@@ -12,9 +19,9 @@ import subprocess
 logger = logging.getLogger(__name__)
 
 # ============ CẤU HÌNH CAMERA ============
-# Tên camera cố định cho làn vào và làn ra
-CAMERA_IN_NAME = "DV20 USB CAMERA"
-CAMERA_OUT_NAME = "GENERAL - UVC"
+# Tên camera cố định cho làn vào và làn ra (Có thể cấu hình từ file .env)
+CAMERA_IN_NAME = os.getenv("CAMERA_IN_NAME", "DV20 USB CAMERA")
+CAMERA_OUT_NAME = os.getenv("CAMERA_OUT_NAME", "GENERAL - UVC")
 
 # Chỉ số dự phòng mặc định nếu tự động nhận diện thất bại
 CAMERA_IN_INDEX = 1
@@ -33,6 +40,7 @@ if env_in is not None and env_out is not None:
         logger.info(f"Đã nhận cấu hình camera từ biến môi trường: IN={CAMERA_IN_INDEX}, OUT={CAMERA_OUT_INDEX}")
     except ValueError:
         pass
+
 
 
 def auto_detect_camera_indices():

@@ -316,21 +316,27 @@ def validate_rfid_for_scan(
         return None, "Loai the RFID khong hop le"
 
     if card.card_type == "monthly":
-        vehicle = (
-            db.query(models.Vehicle)
-            .filter(models.Vehicle.plate_number == recognized_plate)
-            .first()
-        )
-        if not vehicle:
-            return None, "The thang chi ap dung cho xe da dang ky"
-        if card.vehicle_id and card.vehicle_id != vehicle.id:
-            return None, "The RFID khong dung voi xe dang quet"
+        # Lấy thông tin xe đã được đăng ký với thẻ tháng này
+        registered_vehicle = card.vehicle
+        if not registered_vehicle:
+            return None, "The thang chua duoc gan cho phuong tien nao"
 
+        # Nếu biển số xe nhận diện hợp lệ và không phải UNKNOWN, ta đối chiếu biển số
+        if recognized_plate and recognized_plate != "UNKNOWN":
+            plate_distance = levenshtein_distance(
+                ai_service.normalize_plate(registered_vehicle.plate_number),
+                recognized_plate
+            )
+            # Cho phép sai lệch tối đa 1 ký tự do nhận diện biển số có thể sai lệch nhỏ
+            if plate_distance > 1:
+                return None, f"Bien so dang quet ({recognized_plate}) khong khop voi dang ky ve thang ({registered_vehicle.plate_number})"
+        
+        # Kiểm tra thời hạn đăng ký vé tháng của xe đó
         today = get_vietnam_date()
         active_sub = (
             db.query(models.Subscription)
             .filter(
-                models.Subscription.vehicle_id == vehicle.id,
+                models.Subscription.vehicle_id == registered_vehicle.id,
                 models.Subscription.is_active == True,  # noqa: E712
                 models.Subscription.start_date <= today,
                 models.Subscription.end_date >= today,
@@ -339,7 +345,7 @@ def validate_rfid_for_scan(
             .first()
         )
         if not active_sub:
-            return None, "Khong tim thay dang ky ve thang con han"
+            return None, "Dang ky ve thang da het han hoac khong hoat dong"
         if card.monthly_user_id and active_sub.monthly_user_id and card.monthly_user_id != active_sub.monthly_user_id:
             return None, "The RFID khong khop chu dang ky ve thang"
 
@@ -426,52 +432,83 @@ async def process_gate_scan(
             .first()
         )
 
-        session = models.ParkingSession(
-            vehicle_id=vehicle.id if vehicle else None,
-            plate_number=recognized_plate or "UNKNOWN",
-            time_in=now,
-            time_out=None if action == "open" else now,
-            fee=0,
-            image_path=image_path,
-            gate_type="entry",
-            trigger_type=trigger_type,
-            trigger_source_id=source_id,
-            rfid_tag=rfid_tag,
-            rfid_card_id=rfid_card.id if rfid_card else None,
-            rfid_card_type=rfid_card_type,
-            plate_in=recognized_plate or "UNKNOWN",
-            confidence_in=confidence,
-            match_status="pending" if action == "open" else "ignored",
-        )
-        db.add(session)
-        db.commit()
-        db.refresh(session)
+        # Chỉ tạo ParkingSession khi thực sự mở cổng (action="open")
+        # Tránh tạo session "ma" khi bị từ chối, làm sai thống kê Dashboard
+        if action == "open":
+            session = models.ParkingSession(
+                vehicle_id=vehicle.id if vehicle else None,
+                plate_number=recognized_plate or "UNKNOWN",
+                time_in=now,
+                time_out=None,
+                fee=0,
+                image_path=image_path,
+                gate_type="entry",
+                trigger_type=trigger_type,
+                trigger_source_id=source_id,
+                rfid_tag=rfid_tag,
+                rfid_card_id=rfid_card.id if rfid_card else None,
+                rfid_card_type=rfid_card_type,
+                plate_in=recognized_plate or "UNKNOWN",
+                confidence_in=confidence,
+                match_status="pending",
+            )
+            db.add(session)
+            
+            # Cập nhật trạng thái thẻ RFID thành "in_use" (Fix #6)
+            if rfid_card:
+                rfid_card.status = "in_use"
+            
+            db.commit()
+            db.refresh(session)
 
-        # Thông báo qua WebSocket
-        await notify_clients("parking_update", {
-            "action": action,
-            "gate_type": "entry",
-            "plate": recognized_plate,
-            "session_id": session.id,
-            "rfid_tag": rfid_tag,
-            "confidence": confidence,
-            "message": vehicle_msg if can_open else (vehicle_msg if not has_rfid else "Không đủ điều kiện mở cổng"),
-        })
+            await notify_clients("parking_update", {
+                "action": "open",
+                "gate_type": "entry",
+                "plate": recognized_plate,
+                "session_id": session.id,
+                "rfid_tag": rfid_tag,
+                "confidence": confidence,
+                "message": vehicle_msg,
+            })
 
-        return schemas.GateScanResponse(
-            action=action,
-            gate_type="entry",
-            trigger_type=trigger_type,
-            rfid_card_type=rfid_card_type,
-            plate_in=session.plate_in,
-            recognized_plate=recognized_plate or "UNKNOWN",
-            confidence=confidence,
-            valid_plate=valid_plate,
-            matched=True,
-            session_id=session.id,
-            rfid_tag=rfid_tag,
-            message=vehicle_msg if can_open else (vehicle_msg if not has_rfid else "Không đủ điều kiện mở cổng"),
-        )
+            return schemas.GateScanResponse(
+                action="open",
+                gate_type="entry",
+                trigger_type=trigger_type,
+                rfid_card_type=rfid_card_type,
+                plate_in=session.plate_in,
+                recognized_plate=recognized_plate or "UNKNOWN",
+                confidence=confidence,
+                valid_plate=valid_plate,
+                matched=True,
+                session_id=session.id,
+                rfid_tag=rfid_tag,
+                message=vehicle_msg,
+            )
+        else:
+            # Entry bị từ chối → KHÔNG tạo session, chỉ thông báo
+            ignore_msg = vehicle_msg if not has_rfid else "Không đủ điều kiện mở cổng"
+            await notify_clients("parking_update", {
+                "action": "ignore",
+                "gate_type": "entry",
+                "plate": recognized_plate,
+                "rfid_tag": rfid_tag,
+                "confidence": confidence,
+                "message": ignore_msg,
+            })
+
+            return schemas.GateScanResponse(
+                action="ignore",
+                gate_type="entry",
+                trigger_type=trigger_type,
+                rfid_card_type=rfid_card_type,
+                recognized_plate=recognized_plate or "UNKNOWN",
+                confidence=confidence,
+                valid_plate=valid_plate,
+                matched=False,
+                rfid_tag=rfid_tag,
+                message=ignore_msg,
+            )
 
     # EXIT LOGIC: Tìm phiên theo RFID trước (Luồng: Quẹt thẻ để ra)
     open_session = None
@@ -769,9 +806,20 @@ async def gate_scan(
 
 
 # ============ ESP32 ENDPOINTS ============
+@app.post("/api/esp/register")
+def register_esp_ip(request: Request):
+    """
+    ESP32 gui thong tin IP len Backend khi khoi dong xong hoac ket noi lai Wi-Fi.
+    """
+    global esp32_ip
+    esp32_ip = request.client.host
+    logger.info(f"ESP32 registered IP address: {esp32_ip}")
+    return {"status": "ok", "esp32_ip": esp32_ip, "message": "Dang ky IP thanh cong"}
+
+
 # Cooldown: tránh xử lý event trùng lặp từ cảm biến IR
 _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
-ESP_EVENT_COOLDOWN_SECONDS = 5  # Bỏ qua event cùng hướng trong 5 giây
+ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
 
 async def bg_process_esp_event(
     direction: str,
@@ -1138,7 +1186,7 @@ async def parking_check_in(
         raise HTTPException(status_code=400, detail="Empty image")
 
     gate_type = "entry" if direction == "in" else "exit"
-    scan_result = process_gate_scan(
+    scan_result = await process_gate_scan(
         db=db,
         image_bytes=image_bytes,
         filename=file.filename,

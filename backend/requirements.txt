@@ -11,4 +11,5 @@ opencv-python
 ultralytics
 paddleocr
 easyocr
-
+python-dotenv
+cv2-enumerate-cameras
