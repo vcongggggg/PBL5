@@ -16,16 +16,16 @@ import logging
 import time
 import subprocess
 
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("uvicorn")
 
 # ============ CẤU HÌNH CAMERA ============
 # Tên camera cố định cho làn vào và làn ra (Có thể cấu hình từ file .env)
 CAMERA_IN_NAME = os.getenv("CAMERA_IN_NAME", "DV20 USB CAMERA")
 CAMERA_OUT_NAME = os.getenv("CAMERA_OUT_NAME", "GENERAL - UVC")
 
-# Chỉ số dự phòng mặc định nếu tự động nhận diện thất bại
-CAMERA_IN_INDEX = 0
-CAMERA_OUT_INDEX = 1
+# Chỉ số dự phòng mặc định nếu tự động nhận diện thất bại (ban đầu đặt là None để phát hiện camera chính xác)
+CAMERA_IN_INDEX = None
+CAMERA_OUT_INDEX = None
 
 # Cho phép ghi đè index camera qua biến môi trường để cấu hình linh hoạt
 env_in = os.getenv("CAMERA_IN_INDEX")
@@ -86,16 +86,18 @@ def auto_detect_camera_indices():
             CAMERA_IN_INDEX = found_in
             logger.info(f"-> Đã gán thành công camera làn VÀO: '{CAMERA_IN_NAME}' -> Index: {CAMERA_IN_INDEX}")
         else:
-            logger.warning(f"-> Không tìm thấy camera làn VÀO với tên chứa '{CAMERA_IN_NAME}'. Sử dụng mặc định: {CAMERA_IN_INDEX}")
+            CAMERA_IN_INDEX = None
+            logger.warning(f"-> Không tìm thấy camera làn VÀO với tên chứa '{CAMERA_IN_NAME}'. Màn hình cổng vào sẽ tắt.")
 
         if found_out is not None:
             CAMERA_OUT_INDEX = found_out
             logger.info(f"-> Đã gán thành công camera làn RA: '{CAMERA_OUT_NAME}' -> Index: {CAMERA_OUT_INDEX}")
         else:
-            logger.warning(f"-> Không tìm thấy camera làn RA với tên chứa '{CAMERA_OUT_NAME}'. Sử dụng mặc định: {CAMERA_OUT_INDEX}")
+            CAMERA_OUT_INDEX = None
+            logger.warning(f"-> Không tìm thấy camera làn RA với tên chứa '{CAMERA_OUT_NAME}'. Màn hình cổng ra sẽ tắt.")
 
     except Exception as e:
-        logger.error(f"Lỗi khi tự động nhận diện camera qua tên: {e}. Sử dụng mặc định: IN={CAMERA_IN_INDEX}, OUT={CAMERA_OUT_INDEX}")
+        logger.error(f"Lỗi khi tự động nhận diện camera qua tên: {e}.")
 
 
 # ============ CHẠY AUTO-DETECT KHI KHỞI ĐỘNG ============
@@ -110,103 +112,147 @@ class CameraManager:
         with cls._lock:
             if cls._instance is None:
                 cls._instance = super(CameraManager, cls).__new__(cls)
-                cls._instance.cameras = {}
-                cls._instance.last_frames = {}  # {index: (timestamp, bytes)}
-                cls._instance.capture_locks = {}  # {index: Lock}
-                cls._instance.failed_cameras = {}  # {index: last_fail_time}
-                cls._instance.is_running = True  # Cờ để dừng luồng khi shutdown
-                cls._instance.threads = {}  # {index: Thread}
+                cls._instance.cameras = {}        # {"entry": VideoCapture, "exit": VideoCapture}
+                cls._instance.opened_indices = {} # {"entry": int/None, "exit": int/None}
+                cls._instance.last_frames = {}    # {"entry": (timestamp, bytes), "exit": (timestamp, bytes)}
+                cls._instance.capture_locks = {}  # {"entry": Lock, "exit": Lock}
+                cls._instance.failed_cameras = {} # {"entry": last_fail_time, "exit": last_fail_time}
+                cls._instance.is_running = True
+                cls._instance.threads = {}        # {"entry": Thread, "exit": Thread}
                 cls._instance.thread_locks = threading.Lock()
         return cls._instance
 
-    def _get_capture_lock(self, index):
-        if index not in self.capture_locks:
-            self.capture_locks[index] = threading.Lock()
-        return self.capture_locks[index]
+    def _get_capture_lock(self, gate_type):
+        if gate_type not in self.capture_locks:
+            self.capture_locks[gate_type] = threading.Lock()
+        return self.capture_locks[gate_type]
 
-    def get_camera(self, index):
-        if index not in self.cameras:
+    def _resolve_index(self, gate_type):
+        return CAMERA_IN_INDEX if gate_type == "entry" else CAMERA_OUT_INDEX
+
+    def get_camera(self, gate_type):
+        current_index = self._resolve_index(gate_type)
+
+        # Neu camera da duoc mo nhung chi so mo truoc do khac voi chi so moi duoc detect (bi thay doi do cam/rut USB),
+        # thi ta phai giai phong va dong camera cu de mo lai tren dung index moi.
+        if gate_type in self.cameras:
+            opened_index = self.opened_indices.get(gate_type)
+            if opened_index != current_index:
+                logger.info(f"Chi so camera lan {gate_type} thay doi tu {opened_index} sang {current_index}. Dang lam moi ket noi...")
+                with self._get_capture_lock(gate_type):
+                    try:
+                        self.cameras[gate_type].release()
+                    except Exception:
+                        pass
+                    del self.cameras[gate_type]
+                    if gate_type in self.opened_indices:
+                        del self.opened_indices[gate_type]
+
+        if gate_type not in self.cameras:
             now = time.time()
-            if index in self.failed_cameras and now - self.failed_cameras[index] < 10:
+            if gate_type in self.failed_cameras and now - self.failed_cameras[gate_type] < 3:
                 return None
 
-            cap = cv2.VideoCapture(index)
+            index = current_index
+            if index is None:
+                # Nếu chưa gán index, thử quét lại thiết bị
+                auto_detect_camera_indices()
+                index = self._resolve_index(gate_type)
+                if index is None:
+                    self.failed_cameras[gate_type] = now
+                    return None
+
+            logger.info(f"Dang mo camera cho lan {gate_type} bang chi so {index}...")
+            
+            # Tren Windows, neu index >= 700 (da ma hoa backend tu cv2_enumerate_cameras nhu 700, 1400...)
+            # thi ta truyen thang index vao cv2.VideoCapture(index) ma khong kem theo cv2.CAP_DSHOW.
+            # Neu index < 700 (index mac dinh nhu 0, 1, 2...), ta ep dung CAP_DSHOW de tranh MSMF timeout 18 giay.
+            if index >= 700:
+                cap = cv2.VideoCapture(index)
+            else:
+                cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
+
             if cap.isOpened():
-                logger.info(f"Successfully opened Camera {index}")
+                logger.info(f"Mo thanh cong camera cho lan {gate_type} (index {index})")
                 cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
                 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-                self.cameras[index] = cap
-                if index in self.failed_cameras:
-                    del self.failed_cameras[index]
+                self.cameras[gate_type] = cap
+                self.opened_indices[gate_type] = index
+                if gate_type in self.failed_cameras:
+                    del self.failed_cameras[gate_type]
             else:
-                if index not in self.failed_cameras:
-                    logger.error(f"Failed to open Camera {index} (Will retry silently every 10s)")
-                self.failed_cameras[index] = now
+                if gate_type not in self.failed_cameras:
+                    logger.error(f"Khong mo duoc camera cho lan {gate_type} index {index}. Dang quet lai thiet bi USB...")
+                # Khi gặp lỗi, tự động quét lại thiết bị USB ngoài để cập nhật index mới
+                auto_detect_camera_indices()
+                self.failed_cameras[gate_type] = now
                 return None
-        return self.cameras[index]
+        return self.cameras[gate_type]
 
-    def start_camera_thread(self, index):
+    def start_camera_thread(self, gate_type):
         with self.thread_locks:
-            if index in self.threads and self.threads[index].is_alive():
+            if gate_type in self.threads and self.threads[gate_type].is_alive():
                 return
             
-            t = threading.Thread(target=self._camera_loop, args=(index,), daemon=True)
-            self.threads[index] = t
+            t = threading.Thread(target=self._camera_loop, args=(gate_type,), daemon=True)
+            self.threads[gate_type] = t
             t.start()
-            logger.info(f"Started background thread for Camera {index}")
+            logger.info(f"Khoi chay background thread cho camera lan {gate_type}")
 
-    def _camera_loop(self, index):
-        logger.info(f"Camera background loop started for index {index}")
+    def _camera_loop(self, gate_type):
+        logger.info(f"Camera background loop bat dau cho lan {gate_type}")
         while self.is_running:
-            cap = self.get_camera(index)
+            cap = self.get_camera(gate_type)
             if cap is None:
-                time.sleep(1.0)
+                time.sleep(2.0)
                 continue
             
             try:
                 ret, frame = cap.read()
                 if not ret:
-                    logger.error(f"Failed to read frame from Camera {index} in background thread")
-                    with self._get_capture_lock(index):
-                        if index in self.cameras:
+                    logger.error(f"Loi doc frame tu camera {gate_type} trong background thread. Dang tu dong quet lai...")
+                    with self._get_capture_lock(gate_type):
+                        if gate_type in self.cameras:
                             try:
-                                self.cameras[index].release()
+                                self.cameras[gate_type].release()
                             except Exception:
                                 pass
-                            del self.cameras[index]
-                    self.failed_cameras[index] = time.time()
+                            del self.cameras[gate_type]
+                    # Khi mất kết nối hoặc lỗi đọc, tự động quét lại cổng USB để cập nhật chỉ số mới
+                    auto_detect_camera_indices()
+                    self.failed_cameras[gate_type] = time.time()
                     time.sleep(2.0)
                     continue
 
                 _, buffer = cv2.imencode('.jpg', frame)
                 frame_bytes = buffer.tobytes()
                 
-                with self._get_capture_lock(index):
-                    self.last_frames[index] = (time.time(), frame_bytes)
+                with self._get_capture_lock(gate_type):
+                    self.last_frames[gate_type] = (time.time(), frame_bytes)
                 
                 time.sleep(0.04)  # ~25 FPS
             except Exception as e:
-                logger.error(f"Error in camera loop {index}: {e}")
-                time.sleep(1.0)
+                logger.error(f"Loi trong camera loop {gate_type}: {e}")
+                time.sleep(2.0)
 
-    def capture(self, index):
+    def capture(self, gate_type: str):
         if not self.is_running:
             return None
 
-        # Đảm bảo luồng background đã được khởi chạy cho camera này
-        if index not in self.threads or not self.threads[index].is_alive():
-            self.start_camera_thread(index)
+        if gate_type not in ["entry", "exit"]:
+            return None
+
+        if gate_type not in self.threads or not self.threads[gate_type].is_alive():
+            self.start_camera_thread(gate_type)
 
         now = time.time()
-        # Đợi tối đa 2 giây nếu chưa có frame nào từ luồng background
         timeout = 2.0
         start_wait = time.time()
-        while index not in self.last_frames and (time.time() - start_wait < timeout):
+        while gate_type not in self.last_frames and (time.time() - start_wait < timeout):
             time.sleep(0.01)
 
-        if index in self.last_frames:
-            ts, frame_bytes = self.last_frames[index]
-            # Nếu frame quá cũ (ví dụ camera bị treo quá 3 giây), trả về None
+        if gate_type in self.last_frames:
+            ts, frame_bytes = self.last_frames[gate_type]
             if now - ts > 3.0:
                 return None
             return frame_bytes
@@ -214,14 +260,12 @@ class CameraManager:
 
     def release_all(self):
         self.is_running = False
-        # Chờ các thread dừng
-        for index, thread in list(self.threads.items()):
+        for gate_type, thread in list(self.threads.items()):
             if thread.is_alive():
                 thread.join(timeout=1.0)
         self.threads = {}
         
-        # Giải phóng các camera
-        for index, cap in list(self.cameras.items()):
+        for gate_type, cap in list(self.cameras.items()):
             try:
                 cap.release()
             except Exception:
@@ -234,5 +278,5 @@ class CameraManager:
 camera_manager = CameraManager()
 
 
-def capture_image(camera_index: int):
-    return camera_manager.capture(camera_index)
+def capture_image(gate_type: str):
+    return camera_manager.capture(gate_type)

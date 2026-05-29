@@ -894,8 +894,7 @@ async def gate_scan_from_cam(
     rfid_tag: Optional[str] = Form(None),
     db: Session = Depends(get_db),
 ):
-    index = camera_service.CAMERA_IN_INDEX if gate_type == "entry" else camera_service.CAMERA_OUT_INDEX
-    image_bytes = camera_service.capture_image(index)
+    image_bytes = camera_service.capture_image(gate_type)
     if not image_bytes:
         raise HTTPException(status_code=500, detail="Không thể lấy ảnh từ Camera")
     return await process_gate_scan(
@@ -1015,14 +1014,11 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
                 db.rollback()
                 return
 
-            cam_index = camera_service.CAMERA_IN_INDEX if direction == "in" else camera_service.CAMERA_OUT_INDEX
-
             # Chạy trực tiếp bg_process_esp_event như một task bất đồng bộ trong event loop của FastAPI
             asyncio.create_task(
                 bg_process_esp_event(
                     direction=direction,
                     gate_type=gate_type,
-                    cam_index=cam_index,
                     device_id=device_id,
                     scan_token=scan_token
                 )
@@ -1184,7 +1180,6 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
 async def bg_process_esp_event(
     direction: str,
     gate_type: str,
-    cam_index: int,
     device_id: Optional[str],
     scan_token: str
 ):
@@ -1194,7 +1189,7 @@ async def bg_process_esp_event(
     và luôn sẵn sàng đọc thẻ RFID.
     """
     # 1. Chụp ảnh từ Webcam & Nhận diện (thực hiện song song, không khóa event loop/DB)
-    image_bytes = camera_service.capture_image(cam_index)
+    image_bytes = camera_service.capture_image(gate_type)
     
     override_plate = None
     override_confidence = None
@@ -1338,14 +1333,11 @@ async def handle_esp_event(
         db.rollback()
     
     # 1. Xac dinh camera can chup
-    cam_index = camera_service.CAMERA_IN_INDEX if direction == "in" else camera_service.CAMERA_OUT_INDEX
-    
     # 2. Đưa tác vụ chụp ảnh và nhận diện biển số vào Background Tasks để tránh block ESP32
     background_tasks.add_task(
         bg_process_esp_event,
         direction=direction,
         gate_type=gate_type,
-        cam_index=cam_index,
         device_id=payload.device_id,
         scan_token=scan_token
     )
@@ -1640,9 +1632,9 @@ async def handle_fire_alert(
 
 # ============ CAMERA STREAMING ============
 
-def gen_frames(camera_index: int):
+def gen_frames(gate_type: str):
     while camera_manager.is_running:
-        frame_bytes = camera_manager.capture(camera_index)
+        frame_bytes = camera_manager.capture(gate_type)
         if frame_bytes:
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
@@ -1654,8 +1646,7 @@ def gen_frames(camera_index: int):
 def video_feed(gate_type: str):
     if gate_type not in ["entry", "exit"]:
         raise HTTPException(status_code=400, detail="Invalid gate type")
-    index = camera_service.CAMERA_IN_INDEX if gate_type == "entry" else camera_service.CAMERA_OUT_INDEX
-    return StreamingResponse(gen_frames(index),
+    return StreamingResponse(gen_frames(gate_type),
                              media_type="multipart/x-mixed-replace; boundary=frame")
 
 
