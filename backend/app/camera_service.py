@@ -115,6 +115,8 @@ class CameraManager:
                 cls._instance.capture_locks = {}  # {index: Lock}
                 cls._instance.failed_cameras = {}  # {index: last_fail_time}
                 cls._instance.is_running = True  # Cờ để dừng luồng khi shutdown
+                cls._instance.threads = {}  # {index: Thread}
+                cls._instance.thread_locks = threading.Lock()
         return cls._instance
 
     def _get_capture_lock(self, index):
@@ -143,41 +145,90 @@ class CameraManager:
                 return None
         return self.cameras[index]
 
-    def capture(self, index):
-        now = time.time()
-        if index in self.last_frames:
-            ts, frame_bytes = self.last_frames[index]
-            if now - ts < 0.03:
-                return frame_bytes
+    def start_camera_thread(self, index):
+        with self.thread_locks:
+            if index in self.threads and self.threads[index].is_alive():
+                return
+            
+            t = threading.Thread(target=self._camera_loop, args=(index,), daemon=True)
+            self.threads[index] = t
+            t.start()
+            logger.info(f"Started background thread for Camera {index}")
 
-        lock = self._get_capture_lock(index)
-        with lock:
-            if index in self.last_frames:
-                ts, frame_bytes = self.last_frames[index]
-                if now - ts < 0.03:
-                    return frame_bytes
-
+    def _camera_loop(self, index):
+        logger.info(f"Camera background loop started for index {index}")
+        while self.is_running:
             cap = self.get_camera(index)
             if cap is None:
+                time.sleep(1.0)
+                continue
+            
+            try:
+                ret, frame = cap.read()
+                if not ret:
+                    logger.error(f"Failed to read frame from Camera {index} in background thread")
+                    with self._get_capture_lock(index):
+                        if index in self.cameras:
+                            try:
+                                self.cameras[index].release()
+                            except Exception:
+                                pass
+                            del self.cameras[index]
+                    self.failed_cameras[index] = time.time()
+                    time.sleep(2.0)
+                    continue
+
+                _, buffer = cv2.imencode('.jpg', frame)
+                frame_bytes = buffer.tobytes()
+                
+                with self._get_capture_lock(index):
+                    self.last_frames[index] = (time.time(), frame_bytes)
+                
+                time.sleep(0.04)  # ~25 FPS
+            except Exception as e:
+                logger.error(f"Error in camera loop {index}: {e}")
+                time.sleep(1.0)
+
+    def capture(self, index):
+        if not self.is_running:
+            return None
+
+        # Đảm bảo luồng background đã được khởi chạy cho camera này
+        if index not in self.threads or not self.threads[index].is_alive():
+            self.start_camera_thread(index)
+
+        now = time.time()
+        # Đợi tối đa 2 giây nếu chưa có frame nào từ luồng background
+        timeout = 2.0
+        start_wait = time.time()
+        while index not in self.last_frames and (time.time() - start_wait < timeout):
+            time.sleep(0.01)
+
+        if index in self.last_frames:
+            ts, frame_bytes = self.last_frames[index]
+            # Nếu frame quá cũ (ví dụ camera bị treo quá 3 giây), trả về None
+            if now - ts > 3.0:
                 return None
-
-            cap.grab()
-
-            ret, frame = cap.read()
-            if not ret:
-                logger.error(f"Failed to read frame from Camera {index}")
-                return None
-
-            _, buffer = cv2.imencode('.jpg', frame)
-            frame_bytes = buffer.tobytes()
-            self.last_frames[index] = (time.time(), frame_bytes)
             return frame_bytes
+        return None
 
     def release_all(self):
-        for index, cap in self.cameras.items():
-            cap.release()
+        self.is_running = False
+        # Chờ các thread dừng
+        for index, thread in list(self.threads.items()):
+            if thread.is_alive():
+                thread.join(timeout=1.0)
+        self.threads = {}
+        
+        # Giải phóng các camera
+        for index, cap in list(self.cameras.items()):
+            try:
+                cap.release()
+            except Exception:
+                pass
         self.cameras = {}
         self.last_frames = {}
+        logger.info("Released all cameras and stopped background threads.")
 
 
 camera_manager = CameraManager()
