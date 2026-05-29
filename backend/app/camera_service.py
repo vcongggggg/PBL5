@@ -24,8 +24,8 @@ CAMERA_IN_NAME = os.getenv("CAMERA_IN_NAME", "DV20 USB CAMERA")
 CAMERA_OUT_NAME = os.getenv("CAMERA_OUT_NAME", "GENERAL - UVC")
 
 # Chỉ số dự phòng mặc định nếu tự động nhận diện thất bại
-CAMERA_IN_INDEX = 1
-CAMERA_OUT_INDEX = 0
+CAMERA_IN_INDEX = 0
+CAMERA_OUT_INDEX = 1
 
 # Cho phép ghi đè index camera qua biến môi trường để cấu hình linh hoạt
 env_in = os.getenv("CAMERA_IN_INDEX")
