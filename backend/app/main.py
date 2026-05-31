@@ -285,6 +285,41 @@ def image_url_from_path(image_path: Optional[str]) -> Optional[str]:
     return f"/uploads/{filename}"
 
 
+def crop_image_bytes_by_bbox(image_bytes: Optional[bytes], bbox: Optional[List[int]], padding_ratio: float = 0.18) -> Optional[bytes]:
+    if not image_bytes or not bbox:
+        return None
+    try:
+        import cv2
+        import numpy as np
+
+        np_arr = np.frombuffer(image_bytes, np.uint8)
+        frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+        if frame is None:
+            return None
+
+        height, width = frame.shape[:2]
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        bw = max(1, x2 - x1)
+        bh = max(1, y2 - y1)
+        pad_x = int(bw * padding_ratio)
+        pad_y = int(bh * padding_ratio)
+
+        x1 = max(0, x1 - pad_x)
+        y1 = max(0, y1 - pad_y)
+        x2 = min(width, x2 + pad_x)
+        y2 = min(height, y2 + pad_y)
+
+        if x2 <= x1 or y2 <= y1:
+            return None
+
+        crop = frame[y1:y2, x1:x2]
+        ok, buffer = cv2.imencode(".jpg", crop)
+        return buffer.tobytes() if ok else None
+    except Exception:
+        logger.exception("Failed to crop plate evidence image")
+        return None
+
+
 def get_config_text(db: Session, key: str, default: str = "") -> str:
     config = db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
     if not config or not config.value:
@@ -1233,6 +1268,7 @@ async def bg_process_esp_event(
     best_plate_raw = "UNKNOWN"
     best_confidence = 0.0
     best_valid = False
+    best_bbox = None
     last_progress_sent_at = 0.0
     deadline = time_module.time() + PLATE_SCAN_WINDOW_SECONDS
     attempt = 0
@@ -1262,10 +1298,11 @@ async def bg_process_esp_event(
                 })
 
             if track_result.get("accepted") and valid_plate and confidence >= threshold:
-                best_image_bytes = image_bytes
+                best_image_bytes = track_result.get("best_image_bytes") or image_bytes
                 best_plate_raw = plate_raw
                 best_confidence = confidence
                 best_valid = True
+                best_bbox = track_result.get("best_bbox") or track_result.get("bbox")
                 logger.info(
                     "Plate scan accepted for %s after %s attempt(s): plate=%s confidence=%.3f",
                     gate_type,
@@ -1280,6 +1317,7 @@ async def bg_process_esp_event(
                 best_plate_raw = plate_raw
                 best_confidence = confidence
                 best_valid = valid_plate
+                best_bbox = track_result.get("best_bbox") or track_result.get("bbox")
 
         await asyncio.sleep(PLATE_SCAN_INTERVAL_SECONDS)
 
@@ -1298,7 +1336,8 @@ async def bg_process_esp_event(
     image_bytes = best_image_bytes
     recognized_plate = ai_service.normalize_plate(plate_raw)
     plate_tracker.stop(gate_type, "accepted" if best_valid and confidence >= threshold else "finished")
-    image_path = save_upload_image(image_bytes, f"esp_event_{direction}.jpg")
+    evidence_image_bytes = crop_image_bytes_by_bbox(image_bytes, best_bbox) or image_bytes
+    image_path = save_upload_image(evidence_image_bytes, f"esp_event_{direction}.jpg")
 
     # 2. Sử dụng lock và kiểm tra token để tránh overwrite race condition và SQLite block
     async with gate_locks[gate_type]:

@@ -217,15 +217,13 @@ function renderGateResult(gate, data = {}) {
     const plateOutHTML = formatVietnamesePlate(data.plate_out);
     const evidenceUrl = resolveImageUrl(data.image_url);
     const evidenceHTML = evidenceUrl
-        ? `<div class="mb-3 rounded-lg overflow-hidden border border-border-subtle/50 bg-black">
-                <img src="${evidenceUrl}?t=${Date.now()}" alt="Frame nhận diện biển số" class="w-full aspect-video object-contain bg-black" />
-           </div>`
-        : `<div class="mb-3 rounded-lg border border-dashed border-border-subtle/60 bg-surface-container-low/40 h-32 flex items-center justify-center text-[11px] text-on-surface-variant/60 font-semibold">Chưa có frame nhận diện</div>`;
+        ? `<img src="${evidenceUrl}?t=${Date.now()}" alt="Vùng biển số đã crop" class="max-w-[180px] max-h-20 object-contain rounded-md border border-border-subtle/50 bg-black" />`
+        : `<span class="text-on-surface-variant/60 font-semibold">-</span>`;
 
     cfg.result.innerHTML = `
-        ${evidenceHTML}
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Lệnh xử lý</span><strong class="text-xs uppercase tracking-wider text-primary font-bold">${data.action ?? "-"}</strong></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Mã thẻ RFID</span><strong class="font-mono text-xs text-warning">${data.rfid_tag ?? "-"}</strong></div>
+        <div class="flex justify-between items-center py-2 border-b border-border-subtle/20 gap-3"><span class="text-on-surface-variant/80">Ảnh biển số</span><div>${evidenceHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển số AI</span><div>${recPlateHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển ghi nhận vào</span><div>${plateInHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển ghi nhận ra</span><div>${plateOutHTML}</div></div>
