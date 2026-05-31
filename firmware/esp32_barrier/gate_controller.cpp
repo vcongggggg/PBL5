@@ -13,11 +13,6 @@ static unsigned long gateInOpenedAt = 0;
 static unsigned long gateOutOpenedAt = 0;
 
 void initGateHardware() {
-  pinMode(RELAY_CH1_PIN, OUTPUT);
-  pinMode(RELAY_CH2_PIN, OUTPUT);
-  digitalWrite(RELAY_CH1_PIN, LOW);
-  digitalWrite(RELAY_CH2_PIN, LOW);
-
   gateInServo.attach(SERVO_IN_PIN);
   gateOutServo.attach(SERVO_OUT_PIN);
   gateInServo.write(ANGLE_CLOSED);
@@ -51,8 +46,9 @@ void closeGateOut() {
 }
 
 void setAlertRelays(bool on) {
-  digitalWrite(RELAY_CH1_PIN, on ? HIGH : LOW);
-  digitalWrite(RELAY_CH2_PIN, on ? HIGH : LOW);
+  // No relay/alert light is used in the current hardware.
+  // Fire alarm sound is handled by buzzer_service on BUZZER_PIN.
+  (void)on;
 }
 
 void handleAutoClose(bool fireAlertActive) {

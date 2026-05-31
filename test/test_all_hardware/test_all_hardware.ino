@@ -10,9 +10,7 @@
 #define IR_IN_PIN       27
 #define IR_OUT_PIN      26
 #define FIRE_SENSOR_PIN 33
-#define ALERT_CH1_PIN   32
-#define ALERT_CH2_PIN   25
-#define BUZZER_PIN      4
+#define BUZZER_PIN      32
 #define RFID_SS_PIN     5
 #define RFID_RST_PIN    22
 
@@ -33,12 +31,8 @@ void setup() {
   pinMode(IR_IN_PIN, INPUT_PULLUP);
   pinMode(IR_OUT_PIN, INPUT_PULLUP);
   pinMode(FIRE_SENSOR_PIN, INPUT_PULLUP);
-  pinMode(ALERT_CH1_PIN, OUTPUT);
-  pinMode(ALERT_CH2_PIN, OUTPUT);
   pinMode(BUZZER_PIN, OUTPUT);
 
-  digitalWrite(ALERT_CH1_PIN, LOW);
-  digitalWrite(ALERT_CH2_PIN, LOW);
   digitalWrite(BUZZER_PIN, LOW);
 
   ESP32PWM::allocateTimer(0);
@@ -103,8 +97,6 @@ void loop() {
   }
 
   digitalWrite(BUZZER_PIN, fireDetected ? HIGH : LOW);
-  digitalWrite(ALERT_CH1_PIN, fireDetected ? HIGH : LOW);
-  digitalWrite(ALERT_CH2_PIN, fireDetected ? HIGH : LOW);
 
   if (rfid.PICC_IsNewCardPresent() && rfid.PICC_ReadCardSerial()) {
     Serial.print("RFID UID=");

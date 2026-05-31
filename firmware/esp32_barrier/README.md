@@ -1,124 +1,112 @@
-## ESP32 Barrier Controller - PBL5 (Hardware v2)
+## ESP32 Barrier Controller - PBL5
 
-**Mục tiêu:** điều khiển mô hình bãi xe 2 cổng với:
+Firmware dieu khien mo hinh bai xe 2 cong:
 
-- 2 servo (Gate IN / Gate OUT)
-- 2 cảm biến IR (phát hiện xe vào / ra)
+- 2 servo barrier: cong vao / cong ra
+- 2 cam bien IR: phat hien xe vao / ra
 - 1 RFID RC522
-- 1 cảm biến cháy
-- 1 relay 2 kênh (còi/đèn cảnh báo)
+- 1 cam bien chay
+- 1 buzzer noi truc tiep GPIO32
+- Khong dung relay va khong dung den canh bao rieng
 
-## 1) Pin map chuẩn theo firmware mới
+## 1) Pin Map
 
-| Chức năng | Chân ESP32 |
+| Chuc nang | Chan ESP32 |
 |---|---|
 | Servo IN signal | `GPIO14` |
 | Servo OUT signal | `GPIO13` |
-| IR IN | `GPIO27` |
-| IR OUT | `GPIO26` |
+| IR IN OUT | `GPIO27` |
+| IR OUT OUT | `GPIO26` |
 | Fire sensor DO | `GPIO33` |
-| Relay CH1 | `GPIO32` |
-| Relay CH2 | `GPIO25` |
-| RC522 SS (SDA) | `GPIO5` |
+| Buzzer signal | `GPIO32` |
+| RC522 SS/SDA | `GPIO5` |
 | RC522 RST | `GPIO22` |
 | RC522 SCK | `GPIO18` |
 | RC522 MISO | `GPIO19` |
 | RC522 MOSI | `GPIO23` |
 
-## 2) Sơ đồ nguồn (quan trọng)
+`GPIO25` hien khong su dung.
 
-### Nguồn khuyến nghị
+## 2) Nguon
 
-- Adapter ngoài `5V 3A` trở lên (khuyến nghị `5V 5A` nếu 2 servo tải nặng)
-- ESP32 có thể vẫn cấp bằng USB từ máy tính
+- Servo dung nguon 5V ngoai, khuyen nghi 5V 3A tro len.
+- ESP32 co the cap bang USB.
+- Tat ca GND phai noi chung: GND adapter, GND ESP32, GND servo, GND IR, GND RFID, GND fire sensor, GND buzzer.
+- RC522 chi dung 3.3V.
+- Neu IR cap 5V va OUT ra muc 5V, nen dua OUT qua chia ap/level shifter truoc khi vao ESP32.
 
-### Quy tắc bắt buộc
+## 3) Dau Noi
 
-1. **2 servo lấy nguồn từ adapter 5V ngoài** (không lấy từ 3V3).
-2. **GND tất cả phải nối chung mass**:
-   - GND adapter
-   - GND ESP32
-   - GND servo
-   - GND IR/RFID/fire/relay
+### Servo
 
-## 3) Nối dây từng nhóm linh kiện
+Moi servo:
 
-### 3.1 Servo IN / Servo OUT
+- Do/VCC -> `+5V adapter`
+- Nau/den/GND -> `GND chung`
+- Cam/vang/signal:
+  - Servo IN -> `GPIO14`
+  - Servo OUT -> `GPIO13`
 
-Mỗi servo MG996R:
+### IR
 
-- Dây **đỏ** → `+5V adapter`
-- Dây **nâu/đen** → `GND adapter`
-- Dây **cam/vàng**:
-  - Servo IN → `GPIO14`
-  - Servo OUT → `GPIO13`
+- IR IN OUT -> `GPIO27`
+- IR OUT OUT -> `GPIO26`
+- VCC -> theo module, thuong `5V` ngoai hoac `3V3`
+- GND -> `GND chung`
 
-### 3.2 Cảm biến IR
+Firmware co loc nhieu IR: tin hieu phai giu LOW lien tuc `IR_CONFIRM_MS` moi gui event.
 
-- IR IN OUT → `GPIO27`
-- IR OUT OUT → `GPIO26`
-- VCC → `3V3` hoặc `5V` (theo module bạn dùng)
-- GND → `GND`
+### RFID RC522
 
-### 3.3 RFID RC522 (SPI)
+- `SDA/SS` -> `GPIO5`
+- `SCK` -> `GPIO18`
+- `MOSI` -> `GPIO23`
+- `MISO` -> `GPIO19`
+- `RST` -> `GPIO22`
+- `3.3V` -> `3V3 ESP32`
+- `GND` -> `GND chung`
 
-- `SDA(SS)` → `GPIO5`
-- `SCK` → `GPIO18`
-- `MOSI` → `GPIO23`
-- `MISO` → `GPIO19`
-- `RST` → `GPIO22`
-- `3.3V` → `3V3 ESP32` (**không dùng 5V cho RC522**)
-- `GND` → `GND`
+### Fire Sensor
 
-### 3.4 Cảm biến cháy
+- `DO` -> `GPIO33`
+- `VCC` -> `3V3` hoac `5V` theo module
+- `GND` -> `GND chung`
 
-- `DO` → `GPIO33`
-- `VCC` → `3V3` hoặc `5V` (theo module)
-- `GND` → `GND`
+Firmware hien gia dinh cam bien chay active-low:
 
-### 3.5 Relay 2 kênh
+- `LOW` = phat hien chay
+- `HIGH` = binh thuong
 
-- `IN1` → `GPIO32`
-- `IN2` → `GPIO25`
-- `VCC` → `5V`
-- `GND` → `GND`
+### Buzzer
 
-Phần tải của relay:
+- Buzzer signal/control -> `GPIO32`
+- Buzzer GND -> `GND chung`
 
-- CH1: dùng cho còi (COM-NO)
-- CH2: dùng cho đèn cảnh báo (COM-NO)
+Neu buzzer an dong lon, nen dieu khien qua transistor/MOSFET thay vi noi truc tiep GPIO.
 
-## 4) API backend firmware sẽ gọi
+## 4) MQTT Topics
 
-- `POST /api/esp/events` (IR IN/OUT)
-- `POST /api/esp/rfid` (UID thẻ)
-- `POST /api/esp/fire-alert` (cảnh báo cháy)
+- `parking/device/esp32-barrier-01/event/car_detected`
+- `parking/device/esp32-barrier-01/event/rfid_scan`
+- `parking/device/esp32-barrier-01/event/fire_alert`
+- `parking/device/esp32-barrier-01/command/open_gate`
+- `parking/device/esp32-barrier-01/command/reset_fire`
 
-## 5) Checklist test từng bước
-
-1. Test Wi-Fi + gọi API đơn giản.
-2. Test từng IR (IN và OUT) xem có gửi event đúng direction.
-3. Test từng servo riêng (IN rồi OUT).
-4. Test RC522 đọc UID qua Serial.
-5. Test fire sensor kích hoạt relay và gửi `/api/esp/fire-alert`.
-6. Test full-flow: IR/UID hợp lệ -> mở đúng cổng -> tự đóng sau timeout.
-
-## 6) Thư viện Arduino cần cài
+## 5) Thu Vien Arduino
 
 - `ESP32Servo`
 - `MFRC522`
+- `PubSubClient`
+- `WiFiManager`
 
-## 7) Cấu trúc code kiểu mới (modular)
+## 6) Test Phan Cung
 
-Firmware đã tách theo kiểu C++ nhiều file:
+Sketch test doc lap nam trong thu muc `test/`:
 
-- `esp32_barrier.ino`: chỉ giữ `setup()` và `loop()`
-- `config.h`: toàn bộ cấu hình Wi-Fi, URL backend, pin map
-- `network_service.h/.cpp`: kết nối Wi-Fi
-- `gate_controller.h/.cpp`: điều khiển 2 servo + relay
-- `rfid_service.h/.cpp`: đọc UID từ RC522
-- `api_client.h/.cpp`: gọi API backend (`/events`, `/rfid`, `/fire-alert`)
+- `test/test_only_ir/test_only_ir.ino`
+- `test/test_servo/test_servo.ino`
+- `test/rfid_test.ino`
+- `test/test_fire_buzzer/test_fire_buzzer.ino`
+- `test/test_all_hardware/test_all_hardware.ino`
 
-Bạn vẫn nạp bình thường như Arduino sketch, IDE sẽ tự build tất cả file trong cùng thư mục.
-
-
+Thu tu test khuyen nghi: IR -> servo -> RFID -> fire/buzzer -> all hardware -> firmware chinh.

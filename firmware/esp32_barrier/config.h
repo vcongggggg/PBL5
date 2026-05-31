@@ -22,17 +22,15 @@ static const int IR_IN_PIN = 27;
 static const int SERVO_OUT_PIN = 13;
 static const int IR_OUT_PIN = 26;
 
-// Fire + relay
+// Fire sensor
 static const int FIRE_SENSOR_PIN = 33;
-static const int RELAY_CH1_PIN = 32;
-static const int RELAY_CH2_PIN = 25;
 
 // RFID RC522 (SPI)
 static const int RFID_SS_PIN = 5;
 static const int RFID_RST_PIN = 22;
 
 // Buzzer
-static const int BUZZER_PIN = 4;
+static const int BUZZER_PIN = 32;
 
 // ================== BEHAVIOR ==================
 static const int ANGLE_CLOSED = 0;
