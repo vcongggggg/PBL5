@@ -126,12 +126,14 @@ const gateState = {
         result: document.getElementById("result-entry"),
         status: document.getElementById("status-entry"),
         rfidInput: document.getElementById("rfid-entry"),
+        plateCanvas: document.getElementById("canvas-entry"),
     },
     exit: {
         gateType: "exit",
         result: document.getElementById("result-exit"),
         status: document.getElementById("status-exit"),
         rfidInput: document.getElementById("rfid-exit"),
+        plateCanvas: document.getElementById("canvas-exit"),
     },
 };
 
@@ -181,6 +183,54 @@ function resolveImageUrl(imageUrl) {
     return `${API_BASE}${imageUrl}`;
 }
 
+function drawPlateEvidence(gate, imageUrl) {
+    const cfg = gateState[gate];
+    const canvas = cfg?.plateCanvas;
+    if (!canvas) return;
+
+    const ctx = canvas.getContext("2d");
+    const width = canvas.clientWidth || 320;
+    const height = canvas.clientHeight || 80;
+    canvas.width = width;
+    canvas.height = height;
+
+    ctx.clearRect(0, 0, width, height);
+    ctx.fillStyle = "rgba(15, 23, 42, 0.35)";
+    ctx.fillRect(0, 0, width, height);
+
+    const resolvedUrl = resolveImageUrl(imageUrl);
+    if (!resolvedUrl) {
+        ctx.fillStyle = "rgba(148, 163, 184, 0.65)";
+        ctx.font = "600 11px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("CHUA CO ANH BIEN SO", width / 2, height / 2);
+        return;
+    }
+
+    const img = new Image();
+    img.onload = () => {
+        ctx.clearRect(0, 0, width, height);
+        ctx.fillStyle = "#000";
+        ctx.fillRect(0, 0, width, height);
+
+        const scale = Math.min(width / img.width, height / img.height);
+        const drawWidth = img.width * scale;
+        const drawHeight = img.height * scale;
+        const x = (width - drawWidth) / 2;
+        const y = (height - drawHeight) / 2;
+        ctx.drawImage(img, x, y, drawWidth, drawHeight);
+    };
+    img.onerror = () => {
+        ctx.fillStyle = "rgba(244, 63, 94, 0.85)";
+        ctx.font = "700 11px Inter, sans-serif";
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText("LOI TAI ANH", width / 2, height / 2);
+    };
+    img.src = `${resolvedUrl}?t=${Date.now()}`;
+}
+
 function setStatus(gate, message, tone = "") {
     const cfg = gateState[gate];
     if (!cfg || !cfg.status) return;
@@ -215,15 +265,11 @@ function renderGateResult(gate, data = {}) {
     const recPlateHTML = formatVietnamesePlate(data.recognized_plate);
     const plateInHTML = formatVietnamesePlate(data.plate_in);
     const plateOutHTML = formatVietnamesePlate(data.plate_out);
-    const evidenceUrl = resolveImageUrl(data.image_url);
-    const evidenceHTML = evidenceUrl
-        ? `<img src="${evidenceUrl}?t=${Date.now()}" alt="Vùng biển số đã crop" class="max-w-[180px] max-h-20 object-contain rounded-md border border-border-subtle/50 bg-black" />`
-        : `<span class="text-on-surface-variant/60 font-semibold">-</span>`;
+    drawPlateEvidence(gate, data.image_url);
 
     cfg.result.innerHTML = `
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Lệnh xử lý</span><strong class="text-xs uppercase tracking-wider text-primary font-bold">${data.action ?? "-"}</strong></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Mã thẻ RFID</span><strong class="font-mono text-xs text-warning">${data.rfid_tag ?? "-"}</strong></div>
-        <div class="flex justify-between items-center py-2 border-b border-border-subtle/20 gap-3"><span class="text-on-surface-variant/80">Ảnh biển số</span><div>${evidenceHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển số AI</span><div>${recPlateHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển ghi nhận vào</span><div>${plateInHTML}</div></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển ghi nhận ra</span><div>${plateOutHTML}</div></div>
