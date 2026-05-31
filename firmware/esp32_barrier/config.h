@@ -39,6 +39,7 @@ static const int ANGLE_CLOSED = 0;
 static const int ANGLE_OPEN = 80;
 static const unsigned long AUTO_CLOSE_MS = 8000;
 static const unsigned long FIRE_ALERT_COOLDOWN_MS = 10000;
+static const unsigned long IR_CONFIRM_MS = 300;
 
 #endif
 

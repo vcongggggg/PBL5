@@ -8,12 +8,14 @@
 #include "mqtt_service.h"
 
 // Global variables
-bool prevIrIn = false;
-bool prevIrOut = false;
+bool irInEventSentWhileBlocked = false;
+bool irOutEventSentWhileBlocked = false;
 bool fireAlertActive = false;
 unsigned long lastFireAlertSentAt = 0;
 unsigned long lastIrInSentAt = 0;
 unsigned long lastIrOutSentAt = 0;
+unsigned long irInLowStartedAt = 0;
+unsigned long irOutLowStartedAt = 0;
 unsigned long lastRfidSentAt = 0;
 String lastRfidUid = "";
 String lastDirectionHint = "in";
@@ -46,25 +48,38 @@ void handleIrSensors() {
   bool irOutNow = (digitalRead(IR_OUT_PIN) == LOW);
   unsigned long now = millis();
 
-  if (irInNow && !prevIrIn && (now - lastIrInSentAt > IR_EVENT_COOLDOWN_MS)) {
+  if (irInNow && irInLowStartedAt == 0) {
+    irInLowStartedAt = now;
+  } else if (!irInNow) {
+    irInLowStartedAt = 0;
+    irInEventSentWhileBlocked = false;
+  }
+
+  if (irInNow && !irInEventSentWhileBlocked && irInLowStartedAt > 0 && (now - irInLowStartedAt >= IR_CONFIRM_MS) && (now - lastIrInSentAt > IR_EVENT_COOLDOWN_MS)) {
     lastIrInSentAt = now;
+    irInEventSentWhileBlocked = true;
     lastDirectionHint = "in";
     Serial.println("[IR] Xe đang vào -> Kích hoạt camera cổng VÀO");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
     publishCarDetected("in");
     delay(500); // Debounce
   }
-  prevIrIn = irInNow;
+  if (irOutNow && irOutLowStartedAt == 0) {
+    irOutLowStartedAt = now;
+  } else if (!irOutNow) {
+    irOutLowStartedAt = 0;
+    irOutEventSentWhileBlocked = false;
+  }
 
-  if (irOutNow && !prevIrOut && (now - lastIrOutSentAt > IR_EVENT_COOLDOWN_MS)) {
+  if (irOutNow && !irOutEventSentWhileBlocked && irOutLowStartedAt > 0 && (now - irOutLowStartedAt >= IR_CONFIRM_MS) && (now - lastIrOutSentAt > IR_EVENT_COOLDOWN_MS)) {
     lastIrOutSentAt = now;
+    irOutEventSentWhileBlocked = true;
     lastDirectionHint = "out";
     Serial.println("[IR] Xe đang ra -> Kích hoạt camera cổng RA");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
     publishCarDetected("out");
     delay(500); // Debounce
   }
-  prevIrOut = irOutNow;
 }
 
 void handleRfid() {
