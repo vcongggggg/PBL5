@@ -12,7 +12,14 @@ bool prevIrIn = false;
 bool prevIrOut = false;
 bool fireAlertActive = false;
 unsigned long lastFireAlertSentAt = 0;
+unsigned long lastIrInSentAt = 0;
+unsigned long lastIrOutSentAt = 0;
+unsigned long lastRfidSentAt = 0;
+String lastRfidUid = "";
 String lastDirectionHint = "in";
+
+static const unsigned long IR_EVENT_COOLDOWN_MS = 3000;
+static const unsigned long RFID_EVENT_COOLDOWN_MS = 3000;
 
 // Hàm xử lý reset báo động cháy gọi từ mqtt_service callback
 void resetFireAlarmLocal() {
@@ -37,8 +44,10 @@ void handleIrSensors() {
   // Cảm biến E18-D80NK thường trả về LOW khi có vật cản
   bool irInNow = (digitalRead(IR_IN_PIN) == LOW);
   bool irOutNow = (digitalRead(IR_OUT_PIN) == LOW);
+  unsigned long now = millis();
 
-  if (irInNow && !prevIrIn) {
+  if (irInNow && !prevIrIn && (now - lastIrInSentAt > IR_EVENT_COOLDOWN_MS)) {
+    lastIrInSentAt = now;
     lastDirectionHint = "in";
     Serial.println("[IR] Xe đang vào -> Kích hoạt camera cổng VÀO");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
@@ -47,7 +56,8 @@ void handleIrSensors() {
   }
   prevIrIn = irInNow;
 
-  if (irOutNow && !prevIrOut) {
+  if (irOutNow && !prevIrOut && (now - lastIrOutSentAt > IR_EVENT_COOLDOWN_MS)) {
+    lastIrOutSentAt = now;
     lastDirectionHint = "out";
     Serial.println("[IR] Xe đang ra -> Kích hoạt camera cổng RA");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
@@ -63,6 +73,12 @@ void handleRfid() {
 
   String uid = readRfidUid();
   if (uid.length() > 0) {
+    unsigned long now = millis();
+    if (uid == lastRfidUid && (now - lastRfidSentAt < RFID_EVENT_COOLDOWN_MS)) {
+      return;
+    }
+    lastRfidUid = uid;
+    lastRfidSentAt = now;
     buzzerBeep();  // Beep 1 lần ngắn báo đã quẹt thẻ thành công
     publishRfidScan(uid, lastDirectionHint);
     delay(500);

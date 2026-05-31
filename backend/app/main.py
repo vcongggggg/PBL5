@@ -935,6 +935,8 @@ def register_esp_ip(request: Request):
 # Cooldown: tránh xử lý event trùng lặp từ cảm biến IR
 _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
 ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
+PLATE_SCAN_WINDOW_SECONDS = 3.0
+PLATE_SCAN_INTERVAL_SECONDS = 0.35
 
 # Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
 # Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
@@ -1189,27 +1191,64 @@ async def bg_process_esp_event(
     và luôn sẵn sàng đọc thẻ RFID.
     """
     # 1. Chụp ảnh từ Webcam & Nhận diện (thực hiện song song, không khóa event loop/DB)
-    image_bytes = camera_service.capture_image(gate_type)
-    
-    override_plate = None
-    override_confidence = None
-    if not image_bytes:
+    threshold = 0.6
+    db_for_threshold = SessionLocal()
+    try:
+        threshold = get_system_config_value(db_for_threshold, "plate_confidence_threshold", 0.6)
+    finally:
+        db_for_threshold.close()
+
+    best_image_bytes = None
+    best_plate_raw = "UNKNOWN"
+    best_confidence = 0.0
+    best_valid = False
+    deadline = time_module.time() + PLATE_SCAN_WINDOW_SECONDS
+    attempt = 0
+
+    while time_module.time() <= deadline:
+        attempt += 1
+        image_bytes = camera_service.capture_image(gate_type)
+        if image_bytes:
+            plate_raw, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
+            normalized = ai_service.normalize_plate(plate_raw)
+            valid_plate = ai_service.is_valid_vn_plate(normalized)
+
+            if valid_plate and confidence >= threshold:
+                best_image_bytes = image_bytes
+                best_plate_raw = plate_raw
+                best_confidence = confidence
+                best_valid = True
+                logger.info(
+                    "Plate scan accepted for %s after %s attempt(s): plate=%s confidence=%.3f",
+                    gate_type,
+                    attempt,
+                    normalized,
+                    confidence,
+                )
+                break
+
+            if confidence > best_confidence or (valid_plate and not best_valid):
+                best_image_bytes = image_bytes
+                best_plate_raw = plate_raw
+                best_confidence = confidence
+                best_valid = valid_plate
+
+        await asyncio.sleep(PLATE_SCAN_INTERVAL_SECONDS)
+
+    if best_image_bytes is None:
         detected_plate, confidence = ai_service.recognize_plate_demo()
-        override_plate = detected_plate
-        override_confidence = confidence
-        
+        best_plate_raw = detected_plate
+        best_confidence = confidence
+
         import numpy as np
         import cv2
         dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
         cv2.putText(dummy_img, "MOCK", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
         _, buffer = cv2.imencode('.jpg', dummy_img)
-        image_bytes = buffer.tobytes()
-    
-    if override_plate is not None:
-        plate_raw, confidence = override_plate, (override_confidence or 0.9)
-    else:
-        plate_raw, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
-    
+        best_image_bytes = buffer.tobytes()
+
+    plate_raw, confidence = best_plate_raw, best_confidence
+    image_bytes = best_image_bytes
     recognized_plate = ai_service.normalize_plate(plate_raw)
     image_path = save_upload_image(image_bytes, f"esp_event_{direction}.jpg")
 

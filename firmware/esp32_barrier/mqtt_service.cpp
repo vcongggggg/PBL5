@@ -81,7 +81,7 @@ void publishCarDetected(const String &direction) {
   body += "\"gate_id\":\"" + gateId + "\"";
   body += "}";
 
-  mqttClient.publish(MQTT_TOPIC_CAR_DETECTED, body.c_str(), true);
+  mqttClient.publish(MQTT_TOPIC_CAR_DETECTED, body.c_str(), false);
   Serial.printf("[MQTT] Đã gửi sự kiện phát hiện xe cổng (%s)\n", direction.c_str());
 }
 
@@ -98,7 +98,7 @@ void publishRfidScan(const String &uid, const String &directionHint) {
   body += "\"gate_id\":\"" + gateId + "\"";
   body += "}";
 
-  mqttClient.publish(MQTT_TOPIC_RFID_SCAN, body.c_str(), true);
+  mqttClient.publish(MQTT_TOPIC_RFID_SCAN, body.c_str(), false);
   Serial.printf("[MQTT] Đã gửi dữ liệu thẻ RFID (UID: %s)\n", uid.c_str());
 }
 
@@ -113,6 +113,6 @@ void publishFireAlert(int sensorValue) {
   body += "\"message\":\"Fire sensor triggered\"";
   body += "}";
 
-  mqttClient.publish(MQTT_TOPIC_FIRE_ALERT, body.c_str(), true);
+  mqttClient.publish(MQTT_TOPIC_FIRE_ALERT, body.c_str(), false);
   Serial.println("[MQTT] Đã gửi cảnh báo hoả hoạn!");
 }

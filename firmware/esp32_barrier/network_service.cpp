@@ -74,6 +74,8 @@ void connectWifi() {
 
   Serial.print("[WIFI] Connected! IP: ");
   Serial.println(WiFi.localIP());
+  WiFi.setAutoReconnect(true);
+  WiFi.persistent(false);
 }
 
 bool isWifiConnected() {
@@ -91,7 +93,13 @@ void checkWifiReconnect() {
   if (WiFi.status() != WL_CONNECTED) {
     Serial.println("[WIFI] Connection lost. Reconnecting...");
     // Ở đây ta có thể gọi lại connectWifi() hoặc để WiFi tự động kết nối ở background nếu đã có cấu hình
-    WiFi.begin();
+    wl_status_t status = WiFi.status();
+    Serial.printf("[WIFI] Connection not ready, status=%d.\n", status);
+    if (status == WL_IDLE_STATUS) {
+      Serial.println("[WIFI] ESP32 is already connecting. Waiting...");
+      return;
+    }
+    WiFi.reconnect();
   }
 }
 
