@@ -21,12 +21,19 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   Serial.printf("[MQTT] Callback topic: %s -> %s\n", topic, payloadStr.c_str());
 
   if (topicStr.equals(MQTT_TOPIC_COMMAND_OPEN)) {
+    payloadStr.replace(" ", "");
+    payloadStr.replace("\n", "");
+    payloadStr.replace("\r", "");
+    payloadStr.replace("\t", "");
+
     if (payloadStr.indexOf("\"gate\":\"in\"") != -1) {
       Serial.println("[MQTT] Nhận lệnh mở cổng VÀO");
       openGateIn();
     } else if (payloadStr.indexOf("\"gate\":\"out\"") != -1) {
       Serial.println("[MQTT] Nhận lệnh mở cổng RA");
       openGateOut();
+    } else {
+      Serial.println("[MQTT] Không nhận diện được gate trong lệnh open_gate.");
     }
   } else if (topicStr.equals(MQTT_TOPIC_COMMAND_RESET_FIRE)) {
     Serial.println("[MQTT] Nhận lệnh tắt báo động cháy (Reset Fire)");

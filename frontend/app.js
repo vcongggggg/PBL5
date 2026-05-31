@@ -175,6 +175,12 @@ function formatCompactPlate(plateStr) {
     return `<span class="inline-block bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-100 border border-slate-300 dark:border-slate-700 px-2 py-0.5 rounded font-mono font-bold text-xs shadow-sm">${plateStr.toUpperCase()}</span>`;
 }
 
+function resolveImageUrl(imageUrl) {
+    if (!imageUrl) return "";
+    if (imageUrl.startsWith("http")) return imageUrl;
+    return `${API_BASE}${imageUrl}`;
+}
+
 function setStatus(gate, message, tone = "") {
     const cfg = gateState[gate];
     if (!cfg || !cfg.status) return;
@@ -209,8 +215,15 @@ function renderGateResult(gate, data = {}) {
     const recPlateHTML = formatVietnamesePlate(data.recognized_plate);
     const plateInHTML = formatVietnamesePlate(data.plate_in);
     const plateOutHTML = formatVietnamesePlate(data.plate_out);
+    const evidenceUrl = resolveImageUrl(data.image_url);
+    const evidenceHTML = evidenceUrl
+        ? `<div class="mb-3 rounded-lg overflow-hidden border border-border-subtle/50 bg-black">
+                <img src="${evidenceUrl}?t=${Date.now()}" alt="Frame nhận diện biển số" class="w-full aspect-video object-contain bg-black" />
+           </div>`
+        : `<div class="mb-3 rounded-lg border border-dashed border-border-subtle/60 bg-surface-container-low/40 h-32 flex items-center justify-center text-[11px] text-on-surface-variant/60 font-semibold">Chưa có frame nhận diện</div>`;
 
     cfg.result.innerHTML = `
+        ${evidenceHTML}
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Lệnh xử lý</span><strong class="text-xs uppercase tracking-wider text-primary font-bold">${data.action ?? "-"}</strong></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Mã thẻ RFID</span><strong class="font-mono text-xs text-warning">${data.rfid_tag ?? "-"}</strong></div>
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Biển số AI</span><div>${recPlateHTML}</div></div>
@@ -806,6 +819,7 @@ function initWebSocket() {
                 matched: d.action === "open",
                 duration_minutes: d.duration_minutes,
                 fee: d.fee,
+                image_url: d.image_url,
                 message: d.message || "Đã phản hồi lệnh",
             });
 
@@ -837,6 +851,7 @@ function initWebSocket() {
                 action: "pending",
                 recognized_plate: plate,
                 confidence: d.confidence,
+                image_url: d.image_url,
                 message: d.message || "Vui lòng quét thẻ RFID...",
             });
         } else if (payload.event === "tracking_update") {
@@ -850,6 +865,7 @@ function initWebSocket() {
                 action: d.status || "tracking",
                 recognized_plate: plate,
                 confidence: d.confidence,
+                image_url: d.image_url,
                 message: d.message || "Dang bat khung bien so...",
             });
         }

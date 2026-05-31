@@ -10,6 +10,7 @@ logger = logging.getLogger("uvicorn")
 
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status, WebSocket, WebSocketDisconnect, Request, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 import json
@@ -96,6 +97,11 @@ sync_schema()
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="PBL5 Smart Parking API")
+
+BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # ============ WEBSOCKET MANAGER ============
 class ConnectionManager:
@@ -254,21 +260,29 @@ def save_upload_image(image_bytes: bytes, original_name: Optional[str]) -> Optio
     if not image_bytes:
         return None
 
-    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    upload_dir = os.path.join(base_dir, "uploads")
-    os.makedirs(upload_dir, exist_ok=True)
-
     ext = os.path.splitext(original_name or "")[1].lower()
     if ext not in [".jpg", ".jpeg", ".png", ".bmp", ".webp"]:
         ext = ".jpg"
 
     filename = f"capture_{get_vietnam_now().strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex}{ext}"
-    file_path = os.path.join(upload_dir, filename)
+    file_path = os.path.join(UPLOAD_DIR, filename)
 
     with open(file_path, "wb") as file_obj:
         file_obj.write(image_bytes)
 
     return file_path
+
+
+def image_url_from_path(image_path: Optional[str]) -> Optional[str]:
+    if not image_path:
+        return None
+    try:
+        filename = os.path.basename(image_path)
+    except TypeError:
+        return None
+    if not filename:
+        return None
+    return f"/uploads/{filename}"
 
 
 def get_config_text(db: Session, key: str, default: str = "") -> str:
@@ -472,6 +486,7 @@ async def process_gate_scan(
         image_path = existing_image_path
     else:
         image_path = save_upload_image(image_bytes, filename)
+    image_url = image_url_from_path(image_path)
     now = get_vietnam_now()
 
     if gate_type == "entry":
@@ -543,6 +558,7 @@ async def process_gate_scan(
                 "session_id": session.id,
                 "rfid_tag": rfid_tag,
                 "confidence": confidence,
+                "image_url": image_url,
                 "message": vehicle_msg,
             })
 
@@ -558,6 +574,7 @@ async def process_gate_scan(
                 matched=True,
                 session_id=session.id,
                 rfid_tag=rfid_tag,
+                image_url=image_url,
                 message=vehicle_msg,
             )
         else:
@@ -569,6 +586,7 @@ async def process_gate_scan(
                 "plate": recognized_plate,
                 "rfid_tag": rfid_tag,
                 "confidence": confidence,
+                "image_url": image_url,
                 "message": ignore_msg,
             })
 
@@ -582,6 +600,7 @@ async def process_gate_scan(
                 valid_plate=valid_plate,
                 matched=False,
                 rfid_tag=rfid_tag,
+                image_url=image_url,
                 message=ignore_msg,
             )
 
@@ -654,6 +673,7 @@ async def process_gate_scan(
             "plate": recognized_plate or "UNKNOWN",
             "rfid_tag": rfid_tag,
             "confidence": confidence,
+            "image_url": image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -665,6 +685,7 @@ async def process_gate_scan(
             confidence=confidence,
             valid_plate=valid_plate,
             matched=False,
+            image_url=image_url,
             message=msg,
         )
 
@@ -676,6 +697,7 @@ async def process_gate_scan(
             "plate": recognized_plate,
             "rfid_tag": rfid_tag,
             "confidence": confidence,
+            "image_url": image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -688,6 +710,7 @@ async def process_gate_scan(
             confidence=confidence,
             valid_plate=True,
             matched=False,
+            image_url=image_url,
             message=msg,
         )
 
@@ -710,6 +733,7 @@ async def process_gate_scan(
             "session_id": open_session.id,
             "rfid_tag": rfid_tag,
             "confidence": confidence,
+            "image_url": image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -723,6 +747,7 @@ async def process_gate_scan(
             confidence=confidence,
             valid_plate=True,
             matched=False,
+            image_url=image_url,
             message=msg,
         )
 
@@ -735,6 +760,7 @@ async def process_gate_scan(
             "session_id": open_session.id,
             "rfid_tag": rfid_tag,
             "confidence": confidence,
+            "image_url": image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -748,6 +774,7 @@ async def process_gate_scan(
             valid_plate=True,
             matched=False,
             session_id=open_session.id,
+            image_url=image_url,
             message=msg,
         )
 
@@ -784,6 +811,7 @@ async def process_gate_scan(
         "plate_out": recognized_plate,
         "duration_minutes": duration_minutes,
         "matched": True,
+        "image_url": image_url,
         "message": "Biển số ra trùng khớp biển vào, cho phép xe ra"
     })
 
@@ -802,6 +830,7 @@ async def process_gate_scan(
         duration_minutes=duration_minutes,
         fee=fee,
         rfid_tag=rfid_tag or open_session.rfid_tag,
+        image_url=image_url,
         message="Bien so ra trung khop bien vao, cho phep xe ra",
     )
 
@@ -1295,6 +1324,7 @@ async def bg_process_esp_event(
                     "gate_type": "entry",
                     "plate": recognized_plate or "UNKNOWN",
                     "confidence": confidence,
+                    "image_url": image_url_from_path(image_path),
                     "message": msg,
                 })
                 return
@@ -1310,6 +1340,7 @@ async def bg_process_esp_event(
                 "gate_type": gate_type,
                 "recognized_plate": recognized_plate,
                 "confidence": confidence,
+                "image_url": image_url_from_path(image_path),
                 "message": "Chờ quẹt thẻ RFID..."
             })
 
