@@ -17,6 +17,9 @@
 Servo servoIn;
 Servo servoOut;
 MFRC522 rfid(RFID_SS_PIN, RFID_RST_PIN);
+bool prevIrInBlocked = false;
+bool prevIrOutBlocked = false;
+bool prevFireDetected = false;
 
 void beep(int ms = 100) {
   digitalWrite(BUZZER_PIN, HIGH);
@@ -74,6 +77,20 @@ void loop() {
   bool irOutBlocked = (digitalRead(IR_OUT_PIN) == LOW);
   bool fireDetected = (digitalRead(FIRE_SENSOR_PIN) == LOW);
 
+  if (irInBlocked && !prevIrInBlocked) {
+    Serial.println("[ACTION] IR IN detected -> open Servo IN + beep");
+    beep(100);
+  }
+
+  if (irOutBlocked && !prevIrOutBlocked) {
+    Serial.println("[ACTION] IR OUT detected -> open Servo OUT + beep");
+    beep(100);
+  }
+
+  if (fireDetected && !prevFireDetected) {
+    Serial.println("[ACTION] FIRE detected -> buzzer ON");
+  }
+
   if (now - lastPrint >= 500) {
     Serial.print("IR_IN=");
     Serial.print(irInBlocked ? "BLOCKED" : "CLEAR");
@@ -109,6 +126,10 @@ void loop() {
     rfid.PICC_HaltA();
     rfid.PCD_StopCrypto1();
   }
+
+  prevIrInBlocked = irInBlocked;
+  prevIrOutBlocked = irOutBlocked;
+  prevFireDetected = fireDetected;
 
   delay(50);
 }
