@@ -1255,14 +1255,13 @@ async def bg_process_esp_event(
         await asyncio.sleep(PLATE_SCAN_INTERVAL_SECONDS)
 
     if best_image_bytes is None:
-        detected_plate, confidence = ai_service.recognize_plate_demo()
-        best_plate_raw = detected_plate
-        best_confidence = confidence
+        best_plate_raw = "UNKNOWN"
+        best_confidence = 0.0
 
         import numpy as np
         import cv2
         dummy_img = np.zeros((100, 100, 3), dtype=np.uint8)
-        cv2.putText(dummy_img, "MOCK", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+        cv2.putText(dummy_img, "NO CAMERA", (5, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.65, (255, 255, 255), 2)
         _, buffer = cv2.imencode('.jpg', dummy_img)
         best_image_bytes = buffer.tobytes()
 
