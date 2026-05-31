@@ -11,7 +11,7 @@ hàm sẽ trả về giá trị giả lập để hệ thống không bị dừn
 import os
 import logging
 import re
-from typing import Tuple
+from typing import Dict, List, Tuple
 
 # Tắt log verbose của PaddlePaddle và PaddleX trước khi import chúng
 os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
@@ -33,6 +33,10 @@ _yolo_model = None
 _ocr_reader = None
 logger = logging.getLogger(__name__)
 
+
+def _decode_image(image_bytes: bytes):
+    np_arr = np.frombuffer(image_bytes, np.uint8)
+    return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
 
 
 def normalize_plate(text: str) -> str:
@@ -62,6 +66,69 @@ def is_valid_vn_plate(text: str) -> bool:
     if has_digit and has_letter:
         return True
     return has_digit and len(compact) >= 5
+
+
+def _read_plate_roi(plate_roi) -> Tuple[str, float]:
+    if _ocr_reader is None:
+        return "", 0.0
+
+    try:
+        ocr_results = _ocr_reader.predict(plate_roi)
+    except Exception:
+        logger.exception("PaddleOCR failed while reading cropped plate ROI")
+        return "", 0.0
+
+    if not ocr_results:
+        return "", 0.0
+
+    all_texts = []
+    best_ocr_conf = 0.0
+
+    for res in ocr_results:
+        texts = res.get('rec_texts', [])
+        scores = res.get('rec_scores', [])
+        for i, text in enumerate(texts):
+            score = scores[i] if i < len(scores) else 0.0
+            if text:
+                all_texts.append(text)
+                if float(score) > best_ocr_conf:
+                    best_ocr_conf = float(score)
+
+    return normalize_plate("".join(all_texts)), best_ocr_conf
+
+
+def _load_yolo_model() -> None:
+    global _yolo_model
+
+    if _yolo_model is None:
+        try:
+            env_model_path = os.getenv("PLATE_MODEL_PATH", "").strip()
+            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            default_model_path = os.path.join(base_dir, "best.pt")
+            model_path = env_model_path or default_model_path
+            _yolo_model = YOLO(model_path)
+            logger.info("Loaded YOLO plate model from %s", model_path)
+        except Exception:
+            logger.exception("Failed to load YOLO model from configured path")
+            try:
+                _yolo_model = YOLO("yolov8n.pt")
+                logger.warning("Falling back to yolov8n.pt because the configured plate model could not be loaded")
+            except Exception:
+                logger.exception("Failed to load fallback YOLO model yolov8n.pt")
+                _yolo_model = None
+
+
+def _load_ocr_reader() -> None:
+    global _ocr_reader
+
+    if _ocr_reader is None:
+        try:
+            logging.getLogger('ppocr').setLevel(logging.ERROR)
+            _ocr_reader = PaddleOCR(use_textline_orientation=True, lang='en')
+            logger.info("Initialized PaddleOCR successfully")
+        except Exception:
+            logger.exception("Failed to initialize PaddleOCR")
+            _ocr_reader = None
 
 
 def _load_models() -> None:
@@ -95,6 +162,64 @@ def _load_models() -> None:
             _ocr_reader = None
 
 
+def detect_plate_candidates_from_bytes(image_bytes: bytes) -> List[Dict]:
+    """Return YOLO plate candidates with bbox/confidence, without running OCR."""
+    _load_yolo_model()
+
+    if _yolo_model is None:
+        return []
+
+    img = _decode_image(image_bytes)
+    if img is None:
+        return []
+
+    try:
+        results = _yolo_model(img)[0]
+    except Exception:
+        logger.exception("YOLO inference failed while detecting plate candidates")
+        return []
+
+    candidates = []
+    for box in results.boxes:
+        x1, y1, x2, y2 = map(int, box.xyxy[0])
+        if x2 <= x1 or y2 <= y1:
+            continue
+        candidates.append({
+            "bbox": [x1, y1, x2, y2],
+            "det_confidence": float(box.conf[0]),
+        })
+
+    candidates.sort(key=lambda item: item["det_confidence"], reverse=True)
+    return candidates
+
+
+def recognize_plate_in_bbox(image_bytes: bytes, bbox: List[int]) -> Tuple[str, float]:
+    """Run OCR on a known plate bbox."""
+    _load_ocr_reader()
+
+    if _ocr_reader is None:
+        return "", 0.0
+
+    img = _decode_image(image_bytes)
+    if img is None:
+        return "", 0.0
+
+    h, w = img.shape[:2]
+    x1, y1, x2, y2 = bbox
+    x1 = max(0, min(w - 1, int(x1)))
+    y1 = max(0, min(h - 1, int(y1)))
+    x2 = max(0, min(w, int(x2)))
+    y2 = max(0, min(h, int(y2)))
+    if x2 <= x1 or y2 <= y1:
+        return "", 0.0
+
+    plate_roi = img[y1:y2, x1:x2]
+    if plate_roi.size == 0:
+        return "", 0.0
+
+    return _read_plate_roi(plate_roi)
+
+
 def recognize_plate_from_bytes(image_bytes: bytes) -> Tuple[str, float]:
     """
     Nhận vào dữ liệu ảnh (bytes) và trả về:
@@ -113,8 +238,7 @@ def recognize_plate_from_bytes(image_bytes: bytes) -> Tuple[str, float]:
         return "51F-123.45", 0.5
 
     # bytes → ảnh OpenCV (BGR)
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+    img = _decode_image(image_bytes)
     if img is None:
         logger.warning("Failed to decode uploaded image bytes into an OpenCV image")
         return "UNKNOWN", 0.0
@@ -138,38 +262,13 @@ def recognize_plate_from_bytes(image_bytes: bytes) -> Tuple[str, float]:
         logger.warning("Detected plate ROI is empty after cropping: (%s, %s, %s, %s)", x1, y1, x2, y2)
         return "UNKNOWN", 0.0
 
-    try:
-        ocr_results = _ocr_reader.predict(plate_roi)
-    except Exception:
-        logger.exception("PaddleOCR failed while reading cropped plate ROI")
-        return "UNKNOWN", 0.0
-
-    if not ocr_results:
-        logger.info("PaddleOCR returned no text for the detected plate ROI")
-        return "UNKNOWN", 0.0
-
-    all_texts = []
-    best_ocr_conf = 0.0
-
-    for res in ocr_results:
-        texts = res.get('rec_texts', [])
-        scores = res.get('rec_scores', [])
-        for i, text in enumerate(texts):
-            score = scores[i] if i < len(scores) else 0.0
-            if text:
-                all_texts.append(text)
-                if float(score) > best_ocr_conf:
-                    best_ocr_conf = float(score)
-
-    combined_text = "".join(all_texts)
-    
-    if not combined_text:
+    plate, best_ocr_conf = _read_plate_roi(plate_roi)
+    if not plate:
         logger.info("PaddleOCR result contained no usable text candidates")
         return "UNKNOWN", 0.0
 
-    plate = normalize_plate(combined_text)
     confidence = min(conf_det, best_ocr_conf)
-    logger.info("Recognized plate=%s det_conf=%.3f ocr_conf=%.3f raw=%s", plate or "UNKNOWN", conf_det, best_ocr_conf, combined_text)
+    logger.info("Recognized plate=%s det_conf=%.3f ocr_conf=%.3f", plate or "UNKNOWN", conf_det, best_ocr_conf)
 
     return plate, confidence
 

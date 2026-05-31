@@ -839,6 +839,19 @@ function initWebSocket() {
                 confidence: d.confidence,
                 message: d.message || "Vui lòng quét thẻ RFID...",
             });
+        } else if (payload.event === "tracking_update") {
+            const d = payload.data || {};
+            const gate = d.gate_type === "entry" ? "entry" : "exit";
+            const plate = d.plate || "UNKNOWN";
+            const conf = d.confidence != null ? Number(d.confidence).toFixed(2) : "?";
+            const attempts = d.attempts ?? "-";
+            setStatus(gate, `Dang bam bien so: ${plate} (${conf}) - frame ${attempts}`, "warn");
+            renderGateResult(gate, {
+                action: d.status || "tracking",
+                recognized_plate: plate,
+                confidence: d.confidence,
+                message: d.message || "Dang bat khung bien so...",
+            });
         }
     };
     ws.onclose = () => setTimeout(initWebSocket, 5000);

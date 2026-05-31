@@ -19,6 +19,7 @@ from . import ai_service, models, schemas, camera_service
 from .camera_service import camera_manager
 from .database import Base, engine, get_db, SessionLocal
 from .mqtt_manager import mqtt_manager
+from .plate_tracker import plate_tracker
 
 Base.metadata.create_all(bind=engine)
 
@@ -1198,10 +1199,12 @@ async def bg_process_esp_event(
     finally:
         db_for_threshold.close()
 
+    plate_tracker.start(gate_type, PLATE_SCAN_WINDOW_SECONDS)
     best_image_bytes = None
     best_plate_raw = "UNKNOWN"
     best_confidence = 0.0
     best_valid = False
+    last_progress_sent_at = 0.0
     deadline = time_module.time() + PLATE_SCAN_WINDOW_SECONDS
     attempt = 0
 
@@ -1209,11 +1212,27 @@ async def bg_process_esp_event(
         attempt += 1
         image_bytes = camera_service.capture_image(gate_type)
         if image_bytes:
-            plate_raw, confidence = ai_service.recognize_plate_from_bytes(image_bytes)
+            track_result = plate_tracker.update(gate_type, image_bytes, threshold)
+            plate_raw = track_result.get("best_plate") or "UNKNOWN"
+            confidence = float(track_result.get("best_confidence") or 0.0)
             normalized = ai_service.normalize_plate(plate_raw)
             valid_plate = ai_service.is_valid_vn_plate(normalized)
 
-            if valid_plate and confidence >= threshold:
+            now_progress = time_module.time()
+            if now_progress - last_progress_sent_at >= 0.7:
+                last_progress_sent_at = now_progress
+                await notify_clients("tracking_update", {
+                    "gate_type": gate_type,
+                    "status": track_result.get("status", "tracking"),
+                    "attempts": track_result.get("attempts", attempt),
+                    "plate": normalized or "UNKNOWN",
+                    "confidence": confidence,
+                    "stable_count": track_result.get("stable_count", 0),
+                    "bbox": track_result.get("bbox"),
+                    "message": "Đang bám biển số, chờ frame rõ..."
+                })
+
+            if track_result.get("accepted") and valid_plate and confidence >= threshold:
                 best_image_bytes = image_bytes
                 best_plate_raw = plate_raw
                 best_confidence = confidence
@@ -1228,7 +1247,7 @@ async def bg_process_esp_event(
                 break
 
             if confidence > best_confidence or (valid_plate and not best_valid):
-                best_image_bytes = image_bytes
+                best_image_bytes = track_result.get("best_image_bytes") or image_bytes
                 best_plate_raw = plate_raw
                 best_confidence = confidence
                 best_valid = valid_plate
@@ -1250,6 +1269,7 @@ async def bg_process_esp_event(
     plate_raw, confidence = best_plate_raw, best_confidence
     image_bytes = best_image_bytes
     recognized_plate = ai_service.normalize_plate(plate_raw)
+    plate_tracker.stop(gate_type, "accepted" if best_valid and confidence >= threshold else "finished")
     image_path = save_upload_image(image_bytes, f"esp_event_{direction}.jpg")
 
     # 2. Sử dụng lock và kiểm tra token để tránh overwrite race condition và SQLite block
@@ -1675,6 +1695,7 @@ def gen_frames(gate_type: str):
     while camera_manager.is_running:
         frame_bytes = camera_manager.capture(gate_type)
         if frame_bytes:
+            frame_bytes = plate_tracker.annotate_frame(gate_type, frame_bytes)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
         else:
@@ -1687,6 +1708,13 @@ def video_feed(gate_type: str):
         raise HTTPException(status_code=400, detail="Invalid gate type")
     return StreamingResponse(gen_frames(gate_type),
                              media_type="multipart/x-mixed-replace; boundary=frame")
+
+
+@app.get("/api/camera/tracking-status/{gate_type}")
+def tracking_status(gate_type: str):
+    if gate_type not in ["entry", "exit"]:
+        raise HTTPException(status_code=400, detail="Invalid gate type")
+    return plate_tracker.snapshot(gate_type)
 
 
 # ============ AI RECOGNIZE PLATE ============
