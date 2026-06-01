@@ -1,4 +1,9 @@
-<!DOCTYPE html>
+import re
+
+# We will recreate the frontend/index.html using the content of stitch_smart_parking_control_system/code.html
+# and adding the javascript from frontend/index.html.
+
+html_template = """<!DOCTYPE html>
 <html lang="vi"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
@@ -935,3 +940,8 @@
       setInterval(fetchFireAlerts, 3000);
     </script>
 </body></html>
+"""
+
+with open("c:/Minh/TLSVBK/PBL/PBL5/frontend/index.html", "w", encoding="utf-8") as f:
+    f.write(html_template)
+print("Merge complete!")

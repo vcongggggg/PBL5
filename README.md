@@ -1,1 +1,111 @@
+## PBL5 – Hệ thống bãi gửi xe thông minh
+
+Repo này chứa mã nguồn cho:
+
+- **Firmware ESP32** điều khiển barrier.
+- **Backend FastAPI** xử lý logic bãi xe, giao tiếp với ESP32 và frontend.
+- **Frontend Web** có 2 tab quét biển số (cổng vào/cổng ra), trigger cảm biến/RFID và cảnh báo cháy.
+
+## Luồng chính đã triển khai
+
+- 2 cổng quét biển số: `entry` và `exit`.
+- 2 kiểu trigger: `sensor` và `rfid`.
+- Khi trigger, frontend chụp frame camera và gửi backend nhận diện biển số bằng YOLO + EasyOCR.
+- Cổng ra sẽ so sánh biển số vừa quét với dữ liệu biển vào đang mở trong DB để quyết định mở cổng.
+- Có module cảnh báo cháy, hiển thị realtime bằng polling từ frontend.
+
+### 1. Cấu trúc thư mục
+
+- `firmware/esp32_barrier/`
+  - `esp32_barrier.ino`: code Arduino cho ESP32.
+  - `README.md`: hướng dẫn phần vi điều khiển.
+- `backend/`
+  - `app/`
+    - `main.py`: FastAPI app, API cho ESP32 và frontend.
+    - `models.py`: SQLAlchemy models.
+    - `schemas.py`: Pydantic schemas (request/response).
+    - `database.py`: cấu hình kết nối DB.
+  - `requirements.txt`: thư viện Python cần cài.
+- `frontend/`
+  - `index.html`: giao diện dashboard + quản lý xe (HTML + JS thuần gọi API).
+
+### 2. Chạy backend FastAPI (dùng MySQL)
+
+Yêu cầu Python 3.10+.
+
+1. Tạo database MySQL (ví dụ `pbl5`) và một user có quyền truy cập.
+
+2. Sửa thông tin kết nối trong `backend/app/database.py`:
+
+```python
+MYSQL_USER = "root"
+MYSQL_PASSWORD = "password"
+MYSQL_HOST = "127.0.0.1"
+MYSQL_PORT = 3306
+MYSQL_DB = "pbl5"
+```
+
+3. Cài thư viện và chạy server:
+
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
+```
+
+Sau khi chạy:
+
+- Kiểm tra health: `http://localhost:8000/health`
+- Tài liệu API: `http://localhost:8000/docs`
+
+### 3. Chạy frontend web (tĩnh)
+
+Có thể mở trực tiếp file `frontend/index.html` bằng trình duyệt, hoặc dùng server tĩnh:
+
+```bash
+cd frontend
+python -m http.server 5174
+```
+
+Sau đó mở `http://localhost:5174/` trong trình duyệt.  
+Đảm bảo backend FastAPI đang chạy tại `http://localhost:8000`. Nếu đổi port/host, hãy sửa hằng số `API_BASE` trong `frontend/index.html`.
+
+### 4. Kết nối với ESP32 (hardware profile mới)
+
+Firmware `firmware/esp32_barrier/esp32_barrier.ino` đã cập nhật cho:
+
+- 2 servo (cổng vào/cổng ra)
+- 2 cảm biến IR
+- 1 RFID RC522
+- 1 cảm biến cháy + relay 2 kênh
+
+ESP32 gọi các endpoint:
+
+- `POST /api/esp/events` (IR in/out)
+- `POST /api/esp/rfid` (xác thực UID)
+- `POST /api/esp/fire-alert` (cảnh báo cháy)
+
+Lưu ý:
+
+- Luồng `/api/esp/events` hiện vẫn dùng plate demo trong backend để giữ tương thích phần cứng.
+- Bạn có thể cấu hình whitelist RFID trong `system_config` với key `rfid_uid_whitelist` (danh sách UID ngăn cách bởi dấu phẩy).
+
+### 5. API chính cho frontend (đã đồng bộ)
+
+- Trigger cảm biến/RFID:
+  - `POST /api/gates/trigger`
+- Quét biển số theo cổng:
+  - `POST /api/gates/scan`
+    - Form data: `file`, `gate_type` (`entry|exit`), `trigger_type` (`sensor|rfid`), `source_id`, `rfid_tag`.
+- Cảnh báo cháy:
+  - `POST /api/fire-alerts`
+  - `GET /api/fire-alerts?unacked_only=true&limit=10`
+  - `PATCH /api/fire-alerts/{alert_id}/ack`
+
+### 6. Tương thích API cũ
+
+Các endpoint cũ vẫn còn để không làm vỡ client cũ:
+
+- `POST /api/parking/check-in`
+- `POST /api/parking/check-out`
 
