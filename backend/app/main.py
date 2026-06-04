@@ -1199,6 +1199,18 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
             
             pending = active_entry if gate_type == "entry" else active_exit
 
+            if not pending and gate_type == "entry" and card and card.status == "in_use":
+                await notify_clients("parking_update", {
+                    "action": "ignore",
+                    "gate_type": "entry",
+                    "plate": "UNKNOWN",
+                    "rfid_tag": uid_norm,
+                    "confidence": 0.0,
+                    "matched": False,
+                    "message": "Thẻ RFID đang được sử dụng bởi xe khác",
+                })
+                return
+
             # Nếu là cổng ra dự phòng: không có pending scan nhưng thẻ có session mở -> Cho ra luôn
             if not pending and gate_type == "exit" and open_session:
                 result = await process_gate_scan(
@@ -1671,6 +1683,15 @@ async def handle_esp_rfid(
     gate_type = resolved_gate_type
     
     pending = active_entry if gate_type == "entry" else active_exit
+
+    if not pending and gate_type == "entry" and card and card.status == "in_use":
+        return schemas.EspRfidResponse(
+            action="ignore",
+            uid=uid_norm,
+            message="Thẻ RFID đang được sử dụng bởi xe khác",
+            direction=direction,
+            gate_id=payload.gate_id,
+        )
 
     # 3. Dự phòng cho cổng ra: nếu camera hỏng/không có pending_scan nhưng thẻ có open session -> Cho phép ra (UNKNOWN plate fallback)
     if not pending and gate_type == "exit" and open_session:
