@@ -201,6 +201,7 @@ class GateScanResponse(BaseModel):
     fee: Optional[float] = None
     rfid_tag: Optional[str] = None
     image_url: Optional[str] = None
+    plate_in_image_url: Optional[str] = None
     message: str
 
 

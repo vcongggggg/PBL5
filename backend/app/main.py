@@ -700,6 +700,8 @@ async def process_gate_scan(
             else:
                 logger.warning(f"TỪ CHỐI xe ra: RFID đúng nhưng biển số sai quá nhiều ({rfid_plate_distance} ký tự > {MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}. Yêu cầu bảo vệ force checkout.")
 
+    plate_in_image_url = image_url_from_path(open_session.image_path) if open_session else None
+
     if (not valid_plate or confidence < threshold) and not is_rfid_exit_allowed:
         msg = "Biển số ra không hợp lệ hoặc ảnh mờ"
         await notify_clients("parking_update", {
@@ -709,6 +711,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -721,6 +724,7 @@ async def process_gate_scan(
             valid_plate=valid_plate,
             matched=False,
             image_url=image_url,
+            plate_in_image_url=plate_in_image_url,
             message=msg,
         )
 
@@ -733,6 +737,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -746,6 +751,7 @@ async def process_gate_scan(
             valid_plate=True,
             matched=False,
             image_url=image_url,
+            plate_in_image_url=plate_in_image_url,
             message=msg,
         )
 
@@ -769,6 +775,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -783,6 +790,7 @@ async def process_gate_scan(
             valid_plate=True,
             matched=False,
             image_url=image_url,
+            plate_in_image_url=plate_in_image_url,
             message=msg,
         )
 
@@ -796,6 +804,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
         return schemas.GateScanResponse(
@@ -810,6 +819,7 @@ async def process_gate_scan(
             matched=False,
             session_id=open_session.id,
             image_url=image_url,
+            plate_in_image_url=plate_in_image_url,
             message=msg,
         )
 
@@ -847,6 +857,7 @@ async def process_gate_scan(
         "duration_minutes": duration_minutes,
         "matched": True,
         "image_url": image_url,
+        "plate_in_image_url": plate_in_image_url,
         "message": "Biển số ra trùng khớp biển vào, cho phép xe ra"
     })
 
@@ -866,6 +877,7 @@ async def process_gate_scan(
         fee=fee,
         rfid_tag=rfid_tag or open_session.rfid_tag,
         image_url=image_url,
+        plate_in_image_url=plate_in_image_url,
         message="Bien so ra trung khop bien vao, cho phep xe ra",
     )
 
@@ -1028,6 +1040,23 @@ async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate
     if result.action == "open":
         mqtt_manager.publish_open_gate(device_id, direction)
 
+    await notify_clients("parking_update", {
+        "action": result.action,
+        "gate_type": gate_type,
+        "plate": result.recognized_plate,
+        "plate_in": result.plate_in,
+        "plate_out": result.plate_out,
+        "session_id": result.session_id,
+        "rfid_tag": uid_norm,
+        "confidence": result.confidence,
+        "duration_minutes": result.duration_minutes,
+        "fee": result.fee,
+        "matched": result.matched,
+        "image_url": result.image_url,
+        "plate_in_image_url": result.plate_in_image_url,
+        "message": result.message,
+    })
+
     should_delete_pending = (
         result.action == "open" or 
         not result.valid_plate or 
@@ -1189,8 +1218,17 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
                 await notify_clients("parking_update", {
                     "action": result.action,
                     "gate_type": gate_type,
-                    "plate": "UNKNOWN",
-                    "confidence": 0.0,
+                    "plate": result.recognized_plate,
+                    "plate_in": result.plate_in,
+                    "plate_out": result.plate_out,
+                    "session_id": result.session_id,
+                    "rfid_tag": uid_norm,
+                    "confidence": result.confidence,
+                    "duration_minutes": result.duration_minutes,
+                    "fee": result.fee,
+                    "matched": result.matched,
+                    "image_url": result.image_url,
+                    "plate_in_image_url": result.plate_in_image_url,
                     "message": result.message,
                 })
                 return

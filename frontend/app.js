@@ -134,6 +134,7 @@ const gateState = {
         status: document.getElementById("status-exit"),
         rfidInput: document.getElementById("rfid-exit"),
         plateCanvas: document.getElementById("canvas-exit"),
+        entryPlateCanvas: document.getElementById("canvas-exit-entry"),
     },
 };
 
@@ -183,9 +184,9 @@ function resolveImageUrl(imageUrl) {
     return `${API_BASE}${imageUrl}`;
 }
 
-function drawPlateEvidence(gate, imageUrl) {
+function drawPlateEvidence(gate, imageUrl, canvasName = "plateCanvas") {
     const cfg = gateState[gate];
-    const canvas = cfg?.plateCanvas;
+    const canvas = cfg?.[canvasName];
     if (!canvas) return;
 
     const ctx = canvas.getContext("2d");
@@ -266,6 +267,9 @@ function renderGateResult(gate, data = {}) {
     const plateInHTML = formatVietnamesePlate(data.plate_in);
     const plateOutHTML = formatVietnamesePlate(data.plate_out);
     drawPlateEvidence(gate, data.image_url);
+    if (gate === "exit") {
+        drawPlateEvidence(gate, data.plate_in_image_url, "entryPlateCanvas");
+    }
 
     cfg.result.innerHTML = `
         <div class="flex justify-between items-center py-2 border-b border-border-subtle/20"><span class="text-on-surface-variant/80">Lệnh xử lý</span><strong class="text-xs uppercase tracking-wider text-primary font-bold">${data.action ?? "-"}</strong></div>
@@ -864,6 +868,7 @@ function initWebSocket() {
                 duration_minutes: d.duration_minutes,
                 fee: d.fee,
                 image_url: d.image_url,
+                plate_in_image_url: d.plate_in_image_url,
                 message: d.message || "Đã phản hồi lệnh",
             });
 
@@ -896,6 +901,7 @@ function initWebSocket() {
                 recognized_plate: plate,
                 confidence: d.confidence,
                 image_url: d.image_url,
+                plate_in_image_url: d.plate_in_image_url,
                 message: d.message || "Vui lòng quét thẻ RFID...",
             });
         } else if (payload.event === "tracking_update") {
@@ -910,6 +916,7 @@ function initWebSocket() {
                 recognized_plate: plate,
                 confidence: d.confidence,
                 image_url: d.image_url,
+                plate_in_image_url: d.plate_in_image_url,
                 message: d.message || "Dang bat khung bien so...",
             });
         }
