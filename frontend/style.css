@@ -253,6 +253,48 @@ h2, .pf-section-heading {
     box-shadow: 0 0 24px rgba(244, 63, 94, 0.14);
 }
 
+.pf-control-btn {
+    color: #f8fafc;
+    border: 1px solid rgba(15, 23, 42, 0.08);
+    box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.pf-control-start {
+    background: linear-gradient(180deg, #0d9488, #0f766e);
+}
+
+.pf-control-start:hover {
+    background: linear-gradient(180deg, #14a79a, #0d6f68);
+}
+
+.pf-control-stop {
+    background: linear-gradient(180deg, #334155, #1f2937);
+}
+
+.pf-control-stop:hover {
+    background: linear-gradient(180deg, #475569, #273244);
+}
+
+.pf-control-sensor {
+    background: linear-gradient(180deg, #047857, #065f46);
+}
+
+.pf-control-sensor:hover {
+    background: linear-gradient(180deg, #059669, #047857);
+}
+
+.pf-control-danger {
+    background: linear-gradient(180deg, #be123c, #9f1239);
+}
+
+.pf-control-danger:hover {
+    background: linear-gradient(180deg, #e11d48, #be123c);
+}
+
+html:not(.dark) .pf-control-stop {
+    background: linear-gradient(180deg, #243244, #16202c);
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
     width: 6px;
