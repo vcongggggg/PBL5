@@ -357,16 +357,16 @@ def build_capacity_status(total_in_bay: int, max_slots: int, near_full_threshold
 
     if total_in_bay >= safe_max_slots:
         status = "full"
-        message = f"Bãi xe đã đầy ({total_in_bay}/{safe_max_slots}). Tạm dừng nhận xe vào."
+        message = f"Bai xe da day ({total_in_bay}/{safe_max_slots}). Tam dung nhan xe vao."
     elif occupancy_percent >= almost_full_threshold * 100.0:
         status = "almost_full"
-        message = f"Bãi xe sắp đầy, chỉ còn {available_slots} chỗ trống."
+        message = f"Bai xe sap day, chi con {available_slots} cho trong."
     elif occupancy_percent >= near_full_threshold * 100.0:
         status = "near_full"
-        message = f"Bãi xe gần đầy ({total_in_bay}/{safe_max_slots}), nên điều tiết xe vào."
+        message = f"Bai xe gan day ({total_in_bay}/{safe_max_slots}), nen dieu tiet xe vao."
     else:
         status = "normal"
-        message = f"Bãi xe còn {available_slots} chỗ trống."
+        message = f"Bai xe con {available_slots} cho trong."
 
     return {
         "max_slots": safe_max_slots,

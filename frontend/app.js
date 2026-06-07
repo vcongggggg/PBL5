@@ -416,7 +416,13 @@ async function fetchDashboard() {
         document.getElementById("statCapacityText").textContent = `/ ${maxSlots} chỗ (Trống: ${available})`;
 
         const capacityStatus = data.capacity_status || "normal";
-        const capacityMessage = data.capacity_message || `Bãi xe còn ${available} chỗ trống.`;
+        const capacityMessageMap = {
+            normal: `Bãi xe còn ${available} chỗ trống.`,
+            near_full: `Bãi xe gần đầy (${data.total_in_bay}/${maxSlots}), nên điều tiết xe vào.`,
+            almost_full: `Bãi xe sắp đầy, chỉ còn ${available} chỗ trống.`,
+            full: `Bãi xe đã đầy (${data.total_in_bay}/${maxSlots}). Tạm dừng nhận xe vào.`,
+        };
+        const capacityMessage = capacityMessageMap[capacityStatus] || data.capacity_message || `Bãi xe còn ${available} chỗ trống.`;
         const capacityStatusEl = document.getElementById("capacityStatus");
         const capacityStatusDot = document.getElementById("capacityStatusDot");
         const capacityStatusText = document.getElementById("capacityStatusText");
