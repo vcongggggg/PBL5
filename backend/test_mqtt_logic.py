@@ -414,5 +414,224 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(result.action, "ignore")
         self.assertIn("Bai xe da day", result.message)
 
+    def add_guest_card(self, uid: str, status: str = "available"):
+        card = models.RFIDCard(card_uid=uid, card_type="guest", status=status, is_active=True)
+        self.db.add(card)
+        self.db.commit()
+        self.db.refresh(card)
+        return card
+
+    def add_open_session(self, plate: str, uid: str, card: models.RFIDCard):
+        session = models.ParkingSession(
+            plate_number=plate,
+            time_in=get_vietnam_now() - timedelta(minutes=12),
+            time_out=None,
+            fee=0,
+            gate_type="entry",
+            trigger_type="rfid",
+            rfid_tag=uid,
+            rfid_card_id=card.id,
+            rfid_card_type="guest",
+            plate_in=plate,
+            confidence_in=0.95,
+            match_status="pending",
+        )
+        self.db.add(session)
+        self.db.commit()
+        self.db.refresh(session)
+        return session
+
+    async def test_13_simulated_entry_responses_cover_common_cases(self):
+        card_ok = self.add_guest_card("ENTRYOK")
+        card_used = self.add_guest_card("ENTRYUSED", status="in_use")
+
+        no_rfid = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="sensor",
+            source_id="test",
+            rfid_tag=None,
+            override_plate="51F12345",
+            override_confidence=0.95,
+        )
+        self.assertEqual(no_rfid.action, "ignore")
+        self.assertIn("quẹt thẻ RFID", no_rfid.message)
+
+        invalid_plate = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="ENTRYOK",
+            override_plate="UNKNOWN",
+            override_confidence=0.0,
+        )
+        self.assertEqual(invalid_plate.action, "ignore")
+        self.assertIn("khong hop le", invalid_plate.message.lower())
+
+        used_card = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="ENTRYUSED",
+            override_plate="51F22222",
+            override_confidence=0.95,
+        )
+        self.assertEqual(used_card.action, "ignore")
+        self.assertIn("đang được sử dụng", used_card.message.lower())
+
+        valid_entry = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="ENTRYOK",
+            override_plate="51F12345",
+            override_confidence=0.95,
+        )
+        self.assertEqual(valid_entry.action, "open")
+        self.assertIn("vãng lai", valid_entry.message.lower())
+        self.db.refresh(card_ok)
+        self.assertEqual(card_ok.status, "in_use")
+
+    async def test_14_simulated_exit_responses_cover_common_cases(self):
+        card = self.add_guest_card("EXITOK", status="in_use")
+        self.add_open_session("51F12345", "EXITOK", card)
+
+        exact = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="EXITOK",
+            override_plate="51F12345",
+            override_confidence=0.95,
+        )
+        self.assertEqual(exact.action, "open")
+        self.assertIn("trùng khớp", exact.message.lower())
+
+        card = self.add_guest_card("EXITFUZZY1", status="in_use")
+        self.add_open_session("51F12345", "EXITFUZZY1", card)
+        fuzzy_allowed = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="EXITFUZZY1",
+            override_plate="51F12346",
+            override_confidence=0.95,
+        )
+        self.assertEqual(fuzzy_allowed.action, "open")
+        self.assertIn("khớp trong ngưỡng", fuzzy_allowed.message.lower())
+
+        card = self.add_guest_card("EXITRFIDAID", status="in_use")
+        self.add_open_session("51F12345", "EXITRFIDAID", card)
+        rfid_assisted = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="EXITRFIDAID",
+            override_plate="51F12399",
+            override_confidence=0.95,
+        )
+        self.assertEqual(rfid_assisted.action, "open")
+        self.assertIn("rfid khớp", rfid_assisted.message.lower())
+
+        card = self.add_guest_card("EXITBLUR", status="in_use")
+        self.add_open_session("51F77777", "EXITBLUR", card)
+        blurred = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="EXITBLUR",
+            override_plate="UNKNOWN",
+            override_confidence=0.0,
+        )
+        self.assertEqual(blurred.action, "open")
+        self.assertIn("rfid dự phòng", blurred.message.lower())
+
+        card = self.add_guest_card("EXITREJECT", status="in_use")
+        self.add_open_session("51F12345", "EXITREJECT", card)
+        mismatch = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="EXITREJECT",
+            override_plate="30A99999",
+            override_confidence=0.95,
+        )
+        self.assertEqual(mismatch.action, "ignore")
+        self.assertIn("không khớp", mismatch.message.lower())
+
+        no_session = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="sensor",
+            source_id="test",
+            rfid_tag=None,
+            override_plate="59A11111",
+            override_confidence=0.95,
+        )
+        self.assertEqual(no_session.action, "ignore")
+        self.assertIn("không tìm thấy", no_session.message.lower())
+
+    async def test_15_simulated_capacity_and_manual_status_messages(self):
+        for idx in range(4):
+            card = self.add_guest_card(f"CAP{idx}", status="in_use")
+            self.add_open_session(f"51F77{idx:03d}", f"CAP{idx}", card)
+
+        dashboard = main_module.get_dashboard_stats(db=self.db)
+        self.assertEqual(dashboard.capacity_status, "near_full")
+        self.assertEqual(dashboard.available_slots, 1)
+
+        full_card = self.add_guest_card("CAPFULL")
+        for idx in range(4, 5):
+            card = self.add_guest_card(f"CAP{idx}", status="in_use")
+            self.add_open_session(f"51F77{idx:03d}", f"CAP{idx}", card)
+
+        blocked = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="CAPFULL",
+            override_plate="51F88888",
+            override_confidence=0.95,
+        )
+        self.assertEqual(blocked.action, "ignore")
+        self.assertIn("Bai xe da day", blocked.message)
+
+        first = await force_open_gate(gate_type="exit", reason="test", operator="tester", db=self.db, api_key="pbl5_secure_key_12345")
+        second = await force_open_gate(gate_type="exit", reason="test", operator="tester", db=self.db, api_key="pbl5_secure_key_12345")
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "gate_open")
+        self.assertIn("đang mở", second["message"].lower())
+
 if __name__ == "__main__":
     unittest.main()

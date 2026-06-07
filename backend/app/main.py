@@ -389,7 +389,7 @@ def resolve_vehicle_type(db: Session, plate_norm: str) -> Tuple[str, str]:
         .first()
     )
     if not vehicle:
-        return "guest", "Xe khong co trong danh sach"
+        return "guest", "Xe vãng lai, cho phép vào bãi"
 
     today = get_vietnam_date()
     active_sub = (
@@ -403,8 +403,8 @@ def resolve_vehicle_type(db: Session, plate_norm: str) -> Tuple[str, str]:
         .first()
     )
     if active_sub:
-        return "monthly", "Xe ve thang, con han"
-    return "guest", "Xe ve thang, HET han"
+        return "monthly", "Xe vé tháng còn hạn"
+    return "guest", "Xe vé tháng hết hạn, xử lý như xe vãng lai"
 
 
 def calculate_fee(now: datetime, session: models.ParkingSession, db: Session, ticket_type: str = "guest") -> Tuple[int, float]:
@@ -905,8 +905,10 @@ async def process_gate_scan(
         success_msg = MSG_RFID_ONLY_EXIT
     elif rfid_exit_reason == "rfid_assisted":
         success_msg = "Biển số ra lệch nhẹ so với biển vào, RFID khớp nên cho phép xe ra."
-    else:
+    elif plate_distance == 0:
         success_msg = "Biển số ra trùng khớp biển vào, cho phép xe ra"
+    else:
+        success_msg = "Biển số ra khớp trong ngưỡng cho phép, cho phép xe ra"
 
     # Thông báo qua WebSocket
     await notify_clients("parking_update", {
