@@ -26,12 +26,12 @@ function initParkingChart() {
                 {
                     label: 'Lượt Xe Ra',
                     data: [],
-                    borderColor: '#6366f1', // indigo-500
-                    backgroundColor: 'rgba(99, 102, 241, 0.06)',
+                    borderColor: '#f59e0b',
+                    backgroundColor: 'rgba(245, 158, 11, 0.06)',
                     borderWidth: 2,
                     tension: 0.35,
                     fill: true,
-                    pointBackgroundColor: '#6366f1',
+                    pointBackgroundColor: '#f59e0b',
                     pointHoverRadius: 6
                 }
             ]
@@ -436,6 +436,7 @@ async function fetchDashboard() {
         const data = await res.json();
         
         // Populate stats
+        clearStatSkeleton("statInBay", "statInToday", "statOutToday", "statRevenue");
         document.getElementById("statInBay").textContent = data.total_in_bay;
         document.getElementById("statInToday").textContent = data.today_total_in;
         document.getElementById("statOutToday").textContent = data.today_total_out;
@@ -618,9 +619,16 @@ function formatDateTime(value) {
 
 function formatTicketType(value) {
     if (value === "monthly") {
-        return `<span class="px-2 py-0.5 bg-indigo-500/10 text-indigo-500 border border-indigo-500/20 rounded-md text-[10px] font-bold">Vé tháng</span>`;
+        return `<span class="pf-badge px-2.5 py-1 bg-teal-500/10 text-teal-500 border border-teal-500/20 text-[10px] font-bold">Vé tháng</span>`;
     }
-    return `<span class="px-2 py-0.5 bg-amber-500/10 text-amber-600 border border-amber-500/20 rounded-md text-[10px] font-bold">Vé lượt</span>`;
+    return `<span class="pf-badge px-2.5 py-1 bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[10px] font-bold">Vé lượt</span>`;
+}
+
+function clearStatSkeleton(...ids) {
+    ids.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.remove("pf-skeleton");
+    });
 }
 
 async function fetchParkingHistory() {
@@ -643,20 +651,28 @@ async function fetchParkingHistory() {
             tr.className = "hover:bg-surface-container-low/40 border-b border-border-subtle/25 transition-colors";
             
             const badgeClass = row.trigger_type === "entry" 
-                                ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20" 
-                                : row.trigger_type === "exit" ? "bg-slate-500/10 text-slate-500 border border-slate-500/20" : "bg-primary/10 text-primary border border-primary/20";
+                                ? "bg-blue-500/10 text-blue-500 border border-blue-500/20" 
+                                : row.trigger_type === "exit" ? "bg-amber-500/10 text-amber-600 border border-amber-500/20" : "bg-primary/10 text-primary border border-primary/20";
+            const statusClassMap = {
+                pending: "bg-slate-500/10 text-slate-400 border-slate-500/20",
+                matched: "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+                fuzzy_matched: "bg-teal-500/10 text-teal-500 border-teal-500/20",
+                rfid_only: "bg-amber-500/10 text-amber-600 border-amber-500/20",
+                ignored: "bg-rose-500/10 text-rose-500 border-rose-500/20",
+            };
+            const matchStatusClass = statusClassMap[row.match_status] || "bg-slate-500/10 text-slate-400 border-slate-500/20";
             
             tr.innerHTML = `
                 <td class="px-5 py-4 font-mono font-medium">${row.session_id}</td>
                 <td class="px-5 py-4">${formatCompactPlate(row.plate_number)}</td>
                 <td class="px-5 py-4">${formatTicketType(row.ticket_type)}</td>
                 <td class="px-5 py-4 font-bold text-xs uppercase text-on-surface-variant">${row.gate_type || "-"}</td>
-                <td class="px-5 py-4"><span class="px-2.5 py-1 ${badgeClass} rounded-md text-[9px] font-bold uppercase tracking-wider">${row.trigger_type || "-"}</span></td>
+                <td class="px-5 py-4"><span class="pf-badge px-2.5 py-1 ${badgeClass} text-[9px] font-bold uppercase tracking-wider">${row.trigger_type || "-"}</span></td>
                 <td class="px-5 py-4 text-on-surface-variant/80">${formatDateTime(row.time_in)}</td>
                 <td class="px-5 py-4 text-on-surface-variant/80">${formatDateTime(row.time_out)}</td>
                 <td class="px-5 py-4 font-medium">${row.duration_minutes ?? "-"}</td>
                 <td class="px-5 py-4 font-bold">${Number(row.fee || 0).toLocaleString("vi-VN")}</td>
-                <td class="px-5 py-4 text-on-surface-variant/70 text-[11px]">${row.match_status || "-"}</td>
+                <td class="px-5 py-4"><span class="pf-badge px-2.5 py-1 border ${matchStatusClass} text-[9px] font-bold uppercase tracking-wider">${row.match_status || "-"}</span></td>
             `;
             tbody.appendChild(tr);
         });
@@ -686,8 +702,8 @@ async function fetchMonthlyRegistrations() {
             tr.className = "hover:bg-surface-container-low/40 border-b border-border-subtle/25 transition-colors";
             
             const statusBadge = item.is_active 
-                ? '<span class="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 rounded-md text-[9px] font-bold tracking-wider">HOẠT ĐỘNG</span>'
-                : '<span class="px-2.5 py-1 bg-rose-500/10 text-rose-500 border border-rose-500/20 rounded-md text-[9px] font-bold tracking-wider">HẾT HẠN</span>';
+                ? '<span class="pf-badge px-2.5 py-1 bg-emerald-500/10 text-emerald-500 border border-emerald-500/20 text-[9px] font-bold tracking-wider">HOẠT ĐỘNG</span>'
+                : '<span class="pf-badge px-2.5 py-1 bg-rose-500/10 text-rose-500 border border-rose-500/20 text-[9px] font-bold tracking-wider">HẾT HẠN</span>';
 
             tr.innerHTML = `
                 <td class="px-5 py-4 font-mono font-medium">${item.subscription_id}</td>
