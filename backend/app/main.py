@@ -1014,6 +1014,8 @@ _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
 ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
 PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
+MANUAL_GATE_OPEN_SECONDS = 8.0
+_manual_gate_open_until = {"entry": 0.0, "exit": 0.0}
 
 # Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
 # Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
@@ -1541,29 +1543,49 @@ def handle_manual_open(payload: schemas.ManualOpenRequest):
 @app.post("/api/gates/force-open")
 async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(verify_api_key)):
     """
-    API gửi lệnh mở cổng thủ công từ Web UI tới ESP32 (Ưu tiên qua MQTT, dự phòng qua HTTP Web Server).
+    Gui lenh mo cong thu cong tu Web UI toi ESP32.
+    Neu cong dang trong thoi gian mo thu cong thi khong gui lenh lap lai.
     """
-    gate = "in" if gate_type == "entry" else "out"
+    gate_type = (gate_type or "").lower()
+    if gate_type not in ["entry", "exit"]:
+        raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
 
-    # 1. Thử gửi lệnh qua MQTT
+    gate = "in" if gate_type == "entry" else "out"
+    now = time_module.time()
+    open_until = _manual_gate_open_until.get(gate_type, 0.0)
+    if now < open_until:
+        remaining = max(1, int(open_until - now + 0.999))
+        message = f"Cong {gate_type} dang mo, vui long doi {remaining}s truoc khi gui lenh tiep."
+        await notify_clients("parking_update", {
+            "action": "gate_open",
+            "gate_type": gate_type,
+            "message": message,
+        })
+        return {
+            "status": "gate_open",
+            "gate_type": gate_type,
+            "remaining_seconds": remaining,
+            "message": message,
+        }
+
     if mqtt_manager.is_connected:
         mqtt_manager.publish_open_gate("esp32-barrier-01", gate)
+        _manual_gate_open_until[gate_type] = time_module.time() + MANUAL_GATE_OPEN_SECONDS
+        message = "Da mo cong thu cong thanh cong qua MQTT."
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
-            "message": "Đã mở cổng thủ công thành công qua MQTT."
+            "message": message,
         })
-        return {"status": "ok", "message": "Gate opened successfully via MQTT"}
+        return {"status": "ok", "message": message}
 
-    # 2. Dự phòng: HTTP Web Server (chỉ chạy nếu ESP32 IP khả dụng)
     global esp32_ip
     if not esp32_ip:
         raise HTTPException(
             status_code=503,
-            detail="ESP32 chưa kết nối hoặc chưa cập nhật IP lên Backend."
+            detail="ESP32 chua ket noi hoac chua cap nhat IP len Backend."
         )
 
-    gate = "in" if gate_type == "entry" else "out"
     esp_url = f"http://{esp32_ip}/open-gate?gate={gate}"
 
     import urllib.request
@@ -1583,17 +1605,19 @@ async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(ver
     code, body = await run_in_threadpool(send_http_request)
 
     if code == 200:
+        _manual_gate_open_until[gate_type] = time_module.time() + MANUAL_GATE_OPEN_SECONDS
+        message = f"Mo cong {gate_type} thu cong tu xa thanh cong."
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
-            "message": f"Mở cổng {gate_type} thủ công từ xa thành công"
+            "message": message,
         })
-        return {"status": "ok", "message": f"Đã gửi lệnh mở cổng {gate_type} thành công."}
-    else:
-        raise HTTPException(
-            status_code=502,
-            detail=f"Không thể kết nối hoặc lỗi phản hồi từ ESP32: {body}"
-        )
+        return {"status": "ok", "message": message}
+
+    raise HTTPException(
+        status_code=502,
+        detail=f"Khong the ket noi hoac loi phan hoi tu ESP32: {body}"
+    )
 
 
 @app.post("/api/esp/rfid", response_model=schemas.EspRfidResponse)

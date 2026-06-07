@@ -15,6 +15,7 @@ from app.database import Base
 from app.main import app, get_vietnam_now, handle_mqtt_event, bg_process_esp_event
 import app.models as models
 import app.main as main_module
+from app.main import force_open_gate
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_pbl5.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -53,6 +54,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         mock_mqtt.reset_mock()
         mock_mqtt.is_connected = True
         main_module._pending_rfid_scans.clear()
+        main_module._manual_gate_open_until = {"entry": 0.0, "exit": 0.0}
 
         self.db = TestingSessionLocal()
         for table in reversed(Base.metadata.sorted_tables):
@@ -233,6 +235,19 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parking_updates[-1]["gate_type"], "exit")
         self.assertEqual(parking_updates[-1]["action"], "open")
         self.assertEqual(parking_updates[-1]["plate_in_image_url"], "/uploads/entry_plate.jpg")
+
+    async def test_08_manual_open_ignores_spam_until_gate_closes(self):
+        first = await force_open_gate(gate_type="entry", api_key="pbl5_secure_key_12345")
+        second = await force_open_gate(gate_type="entry", api_key="pbl5_secure_key_12345")
+
+        self.assertEqual(first["status"], "ok")
+        self.assertEqual(second["status"], "gate_open")
+        self.assertGreaterEqual(second["remaining_seconds"], 1)
+        main_module.mqtt_manager.publish_open_gate.assert_called_once_with("esp32-barrier-01", "in")
+
+        parking_updates = [data for event, data in self.notifications if event == "parking_update"]
+        self.assertEqual(parking_updates[-1]["action"], "gate_open")
+        self.assertIn("dang mo", parking_updates[-1]["message"].lower())
 
 if __name__ == "__main__":
     unittest.main()
