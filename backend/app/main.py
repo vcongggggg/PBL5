@@ -705,12 +705,14 @@ async def process_gate_scan(
     # - Biển số nhận SAI nhưng thẻ RFID khớp session entry VÀ sai lệch ≤ 3 ký tự → cho ra
     # - Biển số sai > 3 ký tự → từ chối dù RFID đúng (buộc bảo vệ force checkout, phòng gian lận)
     is_rfid_exit_allowed = False
+    rfid_exit_reason = None
     allow_rfid_only_exit = get_config_bool(db, "allow_rfid_only_exit", True)
     if open_session and rfid_tag:
         if not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN":
             # Camera hoàn toàn không đọc được biển → ưu tiên RFID
             if allow_rfid_only_exit:
                 is_rfid_exit_allowed = True
+                rfid_exit_reason = "unreadable"
                 logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
         elif rfid_card and open_session.rfid_card_id and open_session.rfid_card_id == rfid_card.id:
             # Thẻ RFID khớp chính xác session entry → kiểm tra mức sai lệch biển số
@@ -719,10 +721,11 @@ async def process_gate_scan(
                 recognized_plate
             )
             MAX_RFID_FALLBACK_DISTANCE = 3  # Cho phép sai tối đa 3 ký tự khi RFID đúng
-            if rfid_plate_distance <= MAX_RFID_FALLBACK_DISTANCE:
+            if 1 < rfid_plate_distance <= MAX_RFID_FALLBACK_DISTANCE:
                 is_rfid_exit_allowed = True
+                rfid_exit_reason = "rfid_assisted"
                 logger.info(f"Cho phép xe ra: RFID khớp session entry (card_id={rfid_card.id}), biển số sai {rfid_plate_distance} ký tự (≤{MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}")
-            else:
+            elif rfid_plate_distance > MAX_RFID_FALLBACK_DISTANCE:
                 logger.warning(f"TỪ CHỐI xe ra: RFID đúng nhưng biển số sai quá nhiều ({rfid_plate_distance} ký tự > {MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}. Yêu cầu bảo vệ force checkout.")
 
     plate_in_image_url = image_url_from_path(open_session.image_path) if open_session else None
@@ -868,7 +871,12 @@ async def process_gate_scan(
     db.commit()
     db.refresh(open_session)
 
-    success_msg = MSG_RFID_ONLY_EXIT if is_rfid_exit_allowed else "Bien so ra trung khop bien vao, cho phep xe ra"
+    if rfid_exit_reason == "unreadable":
+        success_msg = MSG_RFID_ONLY_EXIT
+    elif rfid_exit_reason == "rfid_assisted":
+        success_msg = "Bien so ra lech nhe so voi bien vao, RFID khop nen cho phep xe ra."
+    else:
+        success_msg = "Bien so ra trung khop bien vao, cho phep xe ra"
 
     # Thông báo qua WebSocket
     await notify_clients("parking_update", {
@@ -885,7 +893,7 @@ async def process_gate_scan(
         "matched": True,
         "image_url": image_url,
         "plate_in_image_url": plate_in_image_url,
-        "message": "Biển số ra trùng khớp biển vào, cho phép xe ra"
+        "message": success_msg
     })
 
     return schemas.GateScanResponse(
