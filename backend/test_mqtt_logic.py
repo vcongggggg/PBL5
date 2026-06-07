@@ -412,7 +412,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result.action, "ignore")
-        self.assertIn("Bai xe da day", result.message)
+        self.assertIn("Bãi xe đã đầy", result.message)
 
 if __name__ == "__main__":
     unittest.main()

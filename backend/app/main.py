@@ -357,16 +357,16 @@ def build_capacity_status(total_in_bay: int, max_slots: int, near_full_threshold
 
     if total_in_bay >= safe_max_slots:
         status = "full"
-        message = f"Bai xe da day ({total_in_bay}/{safe_max_slots}). Tam dung nhan xe vao."
+        message = f"Bãi xe đã đầy ({total_in_bay}/{safe_max_slots}). Tạm dừng nhận xe vào."
     elif occupancy_percent >= almost_full_threshold * 100.0:
         status = "almost_full"
-        message = f"Bai xe sap day, chi con {available_slots} cho trong."
+        message = f"Bãi xe sắp đầy, chỉ còn {available_slots} chỗ trống."
     elif occupancy_percent >= near_full_threshold * 100.0:
         status = "near_full"
-        message = f"Bai xe gan day ({total_in_bay}/{safe_max_slots}), nen dieu tiet xe vao."
+        message = f"Bãi xe gần đầy ({total_in_bay}/{safe_max_slots}), nên điều tiết xe vào."
     else:
         status = "normal"
-        message = f"Bai xe con {available_slots} cho trong."
+        message = f"Bãi xe còn {available_slots} chỗ trống."
 
     return {
         "max_slots": safe_max_slots,
@@ -904,9 +904,9 @@ async def process_gate_scan(
     if rfid_exit_reason == "unreadable":
         success_msg = MSG_RFID_ONLY_EXIT
     elif rfid_exit_reason == "rfid_assisted":
-        success_msg = "Bien so ra lech nhe so voi bien vao, RFID khop nen cho phep xe ra."
+        success_msg = "Biển số ra lệch nhẹ so với biển vào, RFID khớp nên cho phép xe ra."
     else:
-        success_msg = "Bien so ra trung khop bien vao, cho phep xe ra"
+        success_msg = "Biển số ra trùng khớp biển vào, cho phép xe ra"
 
     # Thông báo qua WebSocket
     await notify_clients("parking_update", {

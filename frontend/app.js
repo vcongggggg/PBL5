@@ -413,10 +413,10 @@ async function fetchDashboard() {
         
         const maxSlots = data.max_slots || 50;
         const available = data.available_slots !== undefined ? data.available_slots : (maxSlots - data.total_in_bay);
-        document.getElementById("statCapacityText").textContent = `/ ${maxSlots} cho (Trong: ${available})`;
+        document.getElementById("statCapacityText").textContent = `/ ${maxSlots} chỗ (Trống: ${available})`;
 
         const capacityStatus = data.capacity_status || "normal";
-        const capacityMessage = data.capacity_message || `Bai xe con ${available} cho trong.`;
+        const capacityMessage = data.capacity_message || `Bãi xe còn ${available} chỗ trống.`;
         const capacityStatusEl = document.getElementById("capacityStatus");
         const capacityStatusDot = document.getElementById("capacityStatusDot");
         const capacityStatusText = document.getElementById("capacityStatusText");
