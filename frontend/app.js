@@ -377,6 +377,8 @@ async function forceOpenGate(gate) {
         setStatus(gate, "Đang phát lệnh mở cổng khẩn cấp...", "warn");
         const formData = new FormData();
         formData.append("gate_type", gate);
+        formData.append("reason", "manual_override");
+        formData.append("operator", "admin");
 
         const res = await fetch(`${API_BASE}/api/gates/force-open`, {
             method: "POST",

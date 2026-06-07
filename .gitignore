@@ -1,0 +1,8 @@
+dataset
+venv
+__pycache__/
+uploads/
+*.pyc
+.env
+*.db
+firmware/esp32_barrier/image/

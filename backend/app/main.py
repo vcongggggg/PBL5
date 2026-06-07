@@ -256,6 +256,11 @@ def get_system_config_value(db: Session, key: str, default: float) -> float:
         return default
 
 
+def get_config_bool(db: Session, key: str, default: bool = False) -> bool:
+    value = get_config_text(db, key, "1" if default else "0").strip().lower()
+    return value in ["1", "true", "yes", "on", "enabled"]
+
+
 def save_upload_image(image_bytes: bytes, original_name: Optional[str]) -> Optional[str]:
     if not image_bytes:
         return None
@@ -325,6 +330,24 @@ def get_config_text(db: Session, key: str, default: str = "") -> str:
     if not config or not config.value:
         return default
     return str(config.value)
+
+
+def create_manual_gate_log(
+    db: Session,
+    gate_type: str,
+    action: str,
+    reason: Optional[str] = None,
+    operator: Optional[str] = None,
+    source: str = "web",
+) -> None:
+    db.add(models.ManualGateLog(
+        gate_type=gate_type,
+        action=action,
+        reason=reason,
+        operator=operator,
+        source=source,
+    ))
+    db.commit()
 
 
 def resolve_vehicle_type(db: Session, plate_norm: str) -> Tuple[str, str]:
@@ -682,11 +705,13 @@ async def process_gate_scan(
     # - Biển số nhận SAI nhưng thẻ RFID khớp session entry VÀ sai lệch ≤ 3 ký tự → cho ra
     # - Biển số sai > 3 ký tự → từ chối dù RFID đúng (buộc bảo vệ force checkout, phòng gian lận)
     is_rfid_exit_allowed = False
+    allow_rfid_only_exit = get_config_bool(db, "allow_rfid_only_exit", True)
     if open_session and rfid_tag:
         if not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN":
             # Camera hoàn toàn không đọc được biển → ưu tiên RFID
-            is_rfid_exit_allowed = True
-            logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
+            if allow_rfid_only_exit:
+                is_rfid_exit_allowed = True
+                logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
         elif rfid_card and open_session.rfid_card_id and open_session.rfid_card_id == rfid_card.id:
             # Thẻ RFID khớp chính xác session entry → kiểm tra mức sai lệch biển số
             rfid_plate_distance = levenshtein_distance(
@@ -703,7 +728,7 @@ async def process_gate_scan(
     plate_in_image_url = image_url_from_path(open_session.image_path) if open_session else None
 
     if (not valid_plate or confidence < threshold) and not is_rfid_exit_allowed:
-        msg = "Biển số ra không hợp lệ hoặc ảnh mờ"
+        msg = MSG_RFID_ONLY_EXIT_DISABLED if open_session and rfid_tag and not allow_rfid_only_exit else "Biển số ra không hợp lệ hoặc ảnh mờ"
         await notify_clients("parking_update", {
             "action": "ignore",
             "gate_type": "exit",
@@ -843,6 +868,8 @@ async def process_gate_scan(
     db.commit()
     db.refresh(open_session)
 
+    success_msg = MSG_RFID_ONLY_EXIT if is_rfid_exit_allowed else "Bien so ra trung khop bien vao, cho phep xe ra"
+
     # Thông báo qua WebSocket
     await notify_clients("parking_update", {
         "action": "open",
@@ -878,7 +905,7 @@ async def process_gate_scan(
         rfid_tag=rfid_tag or open_session.rfid_tag,
         image_url=image_url,
         plate_in_image_url=plate_in_image_url,
-        message="Bien so ra trung khop bien vao, cho phep xe ra",
+        message=success_msg,
     )
 
 
@@ -1014,8 +1041,14 @@ _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
 ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
 PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
-MANUAL_GATE_OPEN_SECONDS = 8.0
+MANUAL_GATE_OPEN_SECONDS = 5.0
 _manual_gate_open_until = {"entry": 0.0, "exit": 0.0}
+
+MSG_GATE_OPEN_WAIT = "Cổng {gate_type} đang mở, vui lòng đợi {remaining}s trước khi gửi lệnh tiếp."
+MSG_MANUAL_OPEN_MQTT = "Đã mở cổng thủ công thành công qua MQTT."
+MSG_MANUAL_OPEN_HTTP = "Mở cổng {gate_type} thủ công từ xa thành công."
+MSG_RFID_ONLY_EXIT = "Camera không đọc được biển số, hệ thống cho ra theo RFID dự phòng."
+MSG_RFID_ONLY_EXIT_DISABLED = "Camera không đọc được biển số. Chế độ cho ra dự phòng bằng RFID đang tắt."
 
 # Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
 # Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
@@ -1541,7 +1574,13 @@ def handle_manual_open(payload: schemas.ManualOpenRequest):
 
 
 @app.post("/api/gates/force-open")
-async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(verify_api_key)):
+async def force_open_gate(
+    gate_type: str = Form(...),
+    reason: str = Form("manual_override"),
+    operator: str = Form("operator"),
+    db: Session = Depends(get_db),
+    api_key: str = Depends(verify_api_key),
+):
     """
     Gui lenh mo cong thu cong tu Web UI toi ESP32.
     Neu cong dang trong thoi gian mo thu cong thi khong gui lenh lap lai.
@@ -1551,11 +1590,12 @@ async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(ver
         raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
 
     gate = "in" if gate_type == "entry" else "out"
+    manual_gate_open_seconds = get_system_config_value(db, "manual_gate_open_seconds", MANUAL_GATE_OPEN_SECONDS)
     now = time_module.time()
     open_until = _manual_gate_open_until.get(gate_type, 0.0)
     if now < open_until:
         remaining = max(1, int(open_until - now + 0.999))
-        message = f"Cong {gate_type} dang mo, vui long doi {remaining}s truoc khi gui lenh tiep."
+        message = MSG_GATE_OPEN_WAIT.format(gate_type=gate_type, remaining=remaining)
         await notify_clients("parking_update", {
             "action": "gate_open",
             "gate_type": gate_type,
@@ -1570,8 +1610,9 @@ async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(ver
 
     if mqtt_manager.is_connected:
         mqtt_manager.publish_open_gate("esp32-barrier-01", gate)
-        _manual_gate_open_until[gate_type] = time_module.time() + MANUAL_GATE_OPEN_SECONDS
-        message = "Da mo cong thu cong thanh cong qua MQTT."
+        _manual_gate_open_until[gate_type] = time_module.time() + manual_gate_open_seconds
+        create_manual_gate_log(db, gate_type, "open_manual", reason=reason, operator=operator, source="web_mqtt")
+        message = MSG_MANUAL_OPEN_MQTT
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
@@ -1605,8 +1646,9 @@ async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(ver
     code, body = await run_in_threadpool(send_http_request)
 
     if code == 200:
-        _manual_gate_open_until[gate_type] = time_module.time() + MANUAL_GATE_OPEN_SECONDS
-        message = f"Mo cong {gate_type} thu cong tu xa thanh cong."
+        _manual_gate_open_until[gate_type] = time_module.time() + manual_gate_open_seconds
+        create_manual_gate_log(db, gate_type, "open_manual", reason=reason, operator=operator, source="web_http")
+        message = MSG_MANUAL_OPEN_HTTP.format(gate_type=gate_type)
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
@@ -1617,6 +1659,16 @@ async def force_open_gate(gate_type: str = Form(...), api_key: str = Depends(ver
     raise HTTPException(
         status_code=502,
         detail=f"Khong the ket noi hoac loi phan hoi tu ESP32: {body}"
+    )
+
+
+@app.get("/api/gates/manual-open-logs", response_model=List[schemas.ManualGateLog])
+def list_manual_gate_logs(limit: int = 50, db: Session = Depends(get_db)):
+    return (
+        db.query(models.ManualGateLog)
+        .order_by(models.ManualGateLog.created_at.desc(), models.ManualGateLog.id.desc())
+        .limit(limit)
+        .all()
     )
 
 

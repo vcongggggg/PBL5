@@ -62,7 +62,6 @@ void handleIrSensors() {
     Serial.println("[IR] Xe đang vào -> Kích hoạt camera cổng VÀO");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
     publishCarDetected("in");
-    delay(500); // Debounce
   }
   if (irOutNow && irOutLowStartedAt == 0) {
     irOutLowStartedAt = now;
@@ -78,7 +77,6 @@ void handleIrSensors() {
     Serial.println("[IR] Xe đang ra -> Kích hoạt camera cổng RA");
     buzzerBeep();  // Beep 1 lần ngắn báo phát hiện xe
     publishCarDetected("out");
-    delay(500); // Debounce
   }
 }
 
@@ -96,7 +94,6 @@ void handleRfid() {
     lastRfidSentAt = now;
     buzzerBeep();  // Beep 1 lần ngắn báo đã quẹt thẻ thành công
     publishRfidScan(uid, lastDirectionHint);
-    delay(500);
   }
 }
 

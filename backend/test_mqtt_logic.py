@@ -12,7 +12,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.database import Base
-from app.main import app, get_vietnam_now, handle_mqtt_event, bg_process_esp_event
+from app.main import app, get_vietnam_now, handle_mqtt_event, bg_process_esp_event, process_gate_scan
 import app.models as models
 import app.main as main_module
 from app.main import force_open_gate
@@ -74,7 +74,9 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             "max_parking_slots": "5",
             "rfid_uid_whitelist": "GUEST001,GUEST002,E9B8A7C6",
             "monthly_card_fee": "50000",
-            "guest_card_fee_per_hour": "5000"
+            "guest_card_fee_per_hour": "5000",
+            "manual_gate_open_seconds": "5",
+            "allow_rfid_only_exit": "1"
         }
         for k, v in configs.items():
             db_config = models.SystemConfig(key=k, value=v)
@@ -237,8 +239,8 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(parking_updates[-1]["plate_in_image_url"], "/uploads/entry_plate.jpg")
 
     async def test_08_manual_open_ignores_spam_until_gate_closes(self):
-        first = await force_open_gate(gate_type="entry", api_key="pbl5_secure_key_12345")
-        second = await force_open_gate(gate_type="entry", api_key="pbl5_secure_key_12345")
+        first = await force_open_gate(gate_type="entry", reason="test", operator="tester", db=self.db, api_key="pbl5_secure_key_12345")
+        second = await force_open_gate(gate_type="entry", reason="test", operator="tester", db=self.db, api_key="pbl5_secure_key_12345")
 
         self.assertEqual(first["status"], "ok")
         self.assertEqual(second["status"], "gate_open")
@@ -247,7 +249,125 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
 
         parking_updates = [data for event, data in self.notifications if event == "parking_update"]
         self.assertEqual(parking_updates[-1]["action"], "gate_open")
-        self.assertIn("dang mo", parking_updates[-1]["message"].lower())
+        self.assertIn("đang mở", parking_updates[-1]["message"].lower())
+
+        log_count = self.db.query(models.ManualGateLog).count()
+        self.assertEqual(log_count, 1)
+
+    async def test_09_two_vehicle_sequence_and_wrong_rfid_rejected(self):
+        card_a = models.RFIDCard(card_uid="RFIDA", card_type="guest", status="available", is_active=True)
+        card_b = models.RFIDCard(card_uid="RFIDB", card_type="guest", status="available", is_active=True)
+        self.db.add_all([card_a, card_b])
+        self.db.commit()
+
+        in_a = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDA",
+            override_plate="51F12345",
+            override_confidence=0.95,
+        )
+        in_b = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDB",
+            override_plate="51F67890",
+            override_confidence=0.96,
+        )
+        self.assertEqual(in_a.action, "open")
+        self.assertEqual(in_b.action, "open")
+        self.db.refresh(card_a)
+        self.db.refresh(card_b)
+        self.assertEqual(card_a.status, "in_use")
+        self.assertEqual(card_b.status, "in_use")
+
+        out_a = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDA",
+            override_plate="51F12345",
+            override_confidence=0.95,
+        )
+        self.assertEqual(out_a.action, "open")
+        self.db.refresh(card_a)
+        self.assertEqual(card_a.status, "available")
+
+        wrong_b = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDA",
+            override_plate="51F67890",
+            override_confidence=0.96,
+        )
+        self.assertEqual(wrong_b.action, "ignore")
+        self.assertIn("không khớp", wrong_b.message.lower())
+
+        out_b = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDB",
+            override_plate="51F67890",
+            override_confidence=0.96,
+        )
+        self.assertEqual(out_b.action, "open")
+        self.db.refresh(card_b)
+        self.assertEqual(card_b.status, "available")
+
+    async def test_10_rfid_only_exit_can_be_disabled(self):
+        card = models.RFIDCard(card_uid="RFIDC", card_type="guest", status="in_use", is_active=True)
+        self.db.add(card)
+        self.db.commit()
+        session = models.ParkingSession(
+            plate_number="51F99999",
+            time_in=get_vietnam_now() - timedelta(minutes=10),
+            time_out=None,
+            fee=0,
+            gate_type="entry",
+            trigger_type="rfid",
+            rfid_tag="RFIDC",
+            rfid_card_id=card.id,
+            rfid_card_type="guest",
+            plate_in="51F99999",
+            match_status="pending",
+        )
+        self.db.add(session)
+        cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == "allow_rfid_only_exit").first()
+        cfg.value = "0"
+        self.db.commit()
+
+        result = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="exit",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="RFIDC",
+            override_plate="UNKNOWN",
+            override_confidence=0.0,
+        )
+        self.assertEqual(result.action, "ignore")
+        self.assertIn("dự phòng bằng RFID đang tắt", result.message)
 
 if __name__ == "__main__":
     unittest.main()

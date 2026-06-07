@@ -139,3 +139,15 @@ class PendingScan(Base):
     scan_token = Column(String(100), nullable=True)
 
 
+class ManualGateLog(Base):
+    __tablename__ = "manual_gate_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    gate_type = Column(String(10), nullable=False)
+    action = Column(String(30), nullable=False)
+    reason = Column(String(255), nullable=True)
+    operator = Column(String(100), nullable=True)
+    source = Column(String(30), default="web")
+    created_at = Column(DateTime, default=_ict_now)
+
+

@@ -205,6 +205,18 @@ class GateScanResponse(BaseModel):
     message: str
 
 
+class ManualGateLog(BaseModel):
+    id: int
+    gate_type: str
+    action: str
+    reason: Optional[str] = None
+    operator: Optional[str] = None
+    source: Optional[str] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class FireAlertCreate(BaseModel):
     sensor_id: str
     level: str = "warning"
