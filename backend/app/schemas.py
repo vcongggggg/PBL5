@@ -129,6 +129,11 @@ class DashboardStats(BaseModel):
     today_revenue: float
     max_slots: int
     available_slots: int
+    occupancy_percent: float
+    capacity_status: str
+    capacity_message: str
+    near_full_threshold: float
+    almost_full_threshold: float
 
 
 class ParkingCheckoutRequest(BaseModel):

@@ -76,7 +76,9 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             "monthly_card_fee": "50000",
             "guest_card_fee_per_hour": "5000",
             "manual_gate_open_seconds": "5",
-            "allow_rfid_only_exit": "1"
+            "allow_rfid_only_exit": "1",
+            "parking_near_full_threshold": "0.7",
+            "parking_almost_full_threshold": "0.9"
         }
         for k, v in configs.items():
             db_config = models.SystemConfig(key=k, value=v)
@@ -368,6 +370,49 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(result.action, "ignore")
         self.assertIn("dự phòng bằng RFID đang tắt", result.message)
+
+
+    def test_11_capacity_status_levels(self):
+        normal = main_module.build_capacity_status(total_in_bay=2, max_slots=5)
+        near_full = main_module.build_capacity_status(total_in_bay=4, max_slots=5)
+        full = main_module.build_capacity_status(total_in_bay=5, max_slots=5)
+
+        self.assertEqual(normal["capacity_status"], "normal")
+        self.assertEqual(normal["available_slots"], 3)
+        self.assertEqual(near_full["capacity_status"], "near_full")
+        self.assertEqual(near_full["occupancy_percent"], 80.0)
+        self.assertEqual(full["capacity_status"], "full")
+        self.assertEqual(full["available_slots"], 0)
+
+    async def test_12_entry_rejected_when_parking_full(self):
+        card = models.RFIDCard(card_uid="FULL001", card_type="guest", status="available", is_active=True)
+        self.db.add(card)
+        for idx in range(5):
+            self.db.add(models.ParkingSession(
+                plate_number=f"51F{idx:05d}",
+                time_in=get_vietnam_now() - timedelta(minutes=idx + 1),
+                time_out=None,
+                fee=0,
+                gate_type="entry",
+                trigger_type="rfid",
+                match_status="pending",
+            ))
+        self.db.commit()
+
+        result = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="FULL001",
+            override_plate="51F88888",
+            override_confidence=0.95,
+        )
+
+        self.assertEqual(result.action, "ignore")
+        self.assertIn("Bai xe da day", result.message)
 
 if __name__ == "__main__":
     unittest.main()

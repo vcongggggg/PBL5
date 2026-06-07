@@ -350,6 +350,35 @@ def create_manual_gate_log(
     db.commit()
 
 
+def build_capacity_status(total_in_bay: int, max_slots: int, near_full_threshold: float = 0.7, almost_full_threshold: float = 0.9) -> dict:
+    safe_max_slots = max(1, int(max_slots or 1))
+    available_slots = max(0, safe_max_slots - total_in_bay)
+    occupancy_percent = min(100.0, max(0.0, (total_in_bay / safe_max_slots) * 100.0))
+
+    if total_in_bay >= safe_max_slots:
+        status = "full"
+        message = f"Bai xe da day ({total_in_bay}/{safe_max_slots}). Tam dung nhan xe vao."
+    elif occupancy_percent >= almost_full_threshold * 100.0:
+        status = "almost_full"
+        message = f"Bai xe sap day, chi con {available_slots} cho trong."
+    elif occupancy_percent >= near_full_threshold * 100.0:
+        status = "near_full"
+        message = f"Bai xe gan day ({total_in_bay}/{safe_max_slots}), nen dieu tiet xe vao."
+    else:
+        status = "normal"
+        message = f"Bai xe con {available_slots} cho trong."
+
+    return {
+        "max_slots": safe_max_slots,
+        "available_slots": available_slots,
+        "occupancy_percent": round(occupancy_percent, 1),
+        "capacity_status": status,
+        "capacity_message": message,
+        "near_full_threshold": near_full_threshold,
+        "almost_full_threshold": almost_full_threshold,
+    }
+
+
 def resolve_vehicle_type(db: Session, plate_norm: str) -> Tuple[str, str]:
     if not plate_norm or not ai_service.is_valid_vn_plate(plate_norm):
         return "unknown", "Bien so khong hop le"
@@ -567,12 +596,13 @@ async def process_gate_scan(
                 .filter(models.ParkingSession.time_out.is_(None))
                 .count()
             )
-            if active_vehicles_count >= max_slots:
+            capacity = build_capacity_status(active_vehicles_count, max_slots)
+            if capacity["capacity_status"] == "full":
                 # Nếu không phải manual trigger thì chặn mở barrier
                 if trigger_type != "manual":
                     action = "ignore"
                     can_open = False
-                    vehicle_msg = f"Bãi xe đã đầy chỗ ({active_vehicles_count}/{max_slots} xe)!"
+                    vehicle_msg = capacity["capacity_message"]
 
         vehicle = (
             db.query(models.Vehicle)
@@ -2725,14 +2755,26 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_fee = sum(row[0] or 0 for row in today_revenue)
 
     max_slots = int(get_system_config_value(db, "max_parking_slots", 50))
-    available_slots = max(0, max_slots - total_in_bay)
+    near_full_threshold = get_system_config_value(db, "parking_near_full_threshold", 0.7)
+    almost_full_threshold = get_system_config_value(db, "parking_almost_full_threshold", 0.9)
+    capacity = build_capacity_status(
+        total_in_bay,
+        max_slots,
+        near_full_threshold=near_full_threshold,
+        almost_full_threshold=almost_full_threshold,
+    )
 
     return schemas.DashboardStats(
         total_in_bay=total_in_bay,
         today_total_in=today_total_in,
         today_total_out=today_total_out,
         today_revenue=total_fee,
-        max_slots=max_slots,
-        available_slots=available_slots,
+        max_slots=capacity["max_slots"],
+        available_slots=capacity["available_slots"],
+        occupancy_percent=capacity["occupancy_percent"],
+        capacity_status=capacity["capacity_status"],
+        capacity_message=capacity["capacity_message"],
+        near_full_threshold=capacity["near_full_threshold"],
+        almost_full_threshold=capacity["almost_full_threshold"],
     )
 

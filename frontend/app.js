@@ -413,21 +413,45 @@ async function fetchDashboard() {
         
         const maxSlots = data.max_slots || 50;
         const available = data.available_slots !== undefined ? data.available_slots : (maxSlots - data.total_in_bay);
-        document.getElementById("statCapacityText").textContent = `/ ${maxSlots} chỗ (Trống: ${available})`;
-        
-        // Adjust progress bar
+        document.getElementById("statCapacityText").textContent = `/ ${maxSlots} cho (Trong: ${available})`;
+
+        const capacityStatus = data.capacity_status || "normal";
+        const capacityMessage = data.capacity_message || `Bai xe con ${available} cho trong.`;
+        const capacityStatusEl = document.getElementById("capacityStatus");
+        const capacityStatusDot = document.getElementById("capacityStatusDot");
+        const capacityStatusText = document.getElementById("capacityStatusText");
+        const capacityClassMap = {
+            normal: "text-primary",
+            near_full: "text-warning",
+            almost_full: "text-orange-500",
+            full: "text-rose-500",
+        };
+        const capacityDotMap = {
+            normal: "bg-primary",
+            near_full: "bg-warning",
+            almost_full: "bg-orange-500 animate-pulse",
+            full: "bg-rose-500 animate-pulse",
+        };
+
+        if (capacityStatusEl && capacityStatusText && capacityStatusDot) {
+            capacityStatusEl.className = `mt-2 text-[10px] font-bold flex items-center gap-1.5 ${capacityClassMap[capacityStatus] || capacityClassMap.normal}`;
+            capacityStatusDot.className = `w-1.5 h-1.5 rounded-full ${capacityDotMap[capacityStatus] || capacityDotMap.normal}`;
+            capacityStatusText.textContent = capacityMessage;
+        }
+
         const capacityBar = document.getElementById("capacityBar");
         if (capacityBar) {
-            const percent = Math.min(100, Math.max(0, (data.total_in_bay / maxSlots) * 100));
+            const percent = data.occupancy_percent !== undefined
+                ? Math.min(100, Math.max(0, Number(data.occupancy_percent)))
+                : Math.min(100, Math.max(0, (data.total_in_bay / maxSlots) * 100));
             capacityBar.style.width = `${percent}%`;
-            // Change bar color based on occupancy
-            if (percent > 90) {
-                capacityBar.className = "bg-rose-500 h-full transition-all duration-500";
-            } else if (percent > 70) {
-                capacityBar.className = "bg-warning h-full transition-all duration-500";
-            } else {
-                capacityBar.className = "bg-primary h-full transition-all duration-500";
-            }
+            const barClassMap = {
+                normal: "bg-primary",
+                near_full: "bg-warning",
+                almost_full: "bg-orange-500",
+                full: "bg-rose-500",
+            };
+            capacityBar.className = `${barClassMap[capacityStatus] || barClassMap.normal} h-full transition-all duration-500`;
         }
     } catch (err) {
         console.error(err);
