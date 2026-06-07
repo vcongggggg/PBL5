@@ -444,7 +444,17 @@ async function fetchDashboard() {
         
         const maxSlots = data.max_slots || 50;
         const available = data.available_slots !== undefined ? data.available_slots : (maxSlots - data.total_in_bay);
+        const guestInBay = Number(data.guest_in_bay ?? 0);
+        const monthlyInBay = Number(data.monthly_in_bay ?? 0);
+        const maxGuestSlots = Number(data.max_guest_slots || 0);
+        const maxMonthlySlots = Number(data.max_monthly_slots || 0);
+        const guestCapacityText = maxGuestSlots > 0 ? `${guestInBay} / ${maxGuestSlots}` : `${guestInBay} / -`;
+        const monthlyCapacityText = maxMonthlySlots > 0 ? `${monthlyInBay} / ${maxMonthlySlots}` : `${monthlyInBay} / -`;
         document.getElementById("statCapacityText").textContent = `/ ${maxSlots} chỗ (Trống: ${available})`;
+        const capacityBreakdown = document.getElementById("capacityBreakdown");
+        if (capacityBreakdown) {
+            capacityBreakdown.textContent = `Vãng lai: ${guestCapacityText} · Vé tháng: ${monthlyCapacityText}`;
+        }
 
         const capacityStatus = data.capacity_status || "normal";
         const capacityMessageMap = {
@@ -497,6 +507,7 @@ async function fetchDashboard() {
         const liveCapacityCount = document.getElementById("liveCapacityCount");
         const liveCapacityPercent = document.getElementById("liveCapacityPercent");
         const liveCapacityBar = document.getElementById("liveCapacityBar");
+        const liveCapacityBreakdown = document.getElementById("liveCapacityBreakdown");
         const liveToneMap = {
             normal: {
                 panel: "bg-surface-card border-border-subtle/70",
@@ -528,6 +539,9 @@ async function fetchDashboard() {
             liveCapacityPanel.className = `border rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm ${tone.panel}`;
             liveCapacityIcon.className = `w-10 h-10 rounded-lg flex items-center justify-center ${tone.icon}`;
             liveCapacityMessage.textContent = capacityMessage;
+            if (liveCapacityBreakdown) {
+                liveCapacityBreakdown.textContent = `Vãng lai: ${guestCapacityText} · Vé tháng: ${monthlyCapacityText}`;
+            }
             liveCapacityCount.textContent = `${data.total_in_bay} / ${maxSlots} xe`;
             liveCapacityPercent.textContent = `${percent.toFixed(1)}%`;
             liveCapacityBar.style.width = `${percent}%`;

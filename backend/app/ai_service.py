@@ -56,7 +56,7 @@ def is_valid_vn_plate(text: str) -> bool:
 
     # Loai bo ky tu phan cach de kiem tra do dai/ky tu cot loi.
     compact = re.sub(r"[\.\-]", "", normalized)
-    if len(compact) < 4 or len(compact) > 12:
+    if len(compact) < 7 or len(compact) > 12:
         return False
 
     has_digit = any(ch.isdigit() for ch in compact)

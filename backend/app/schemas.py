@@ -124,6 +124,8 @@ class FireAlertResponse(BaseModel):
 
 class DashboardStats(BaseModel):
     total_in_bay: int
+    guest_in_bay: int = 0
+    monthly_in_bay: int = 0
     today_total_in: int
     today_total_out: int
     today_revenue: float
@@ -134,6 +136,14 @@ class DashboardStats(BaseModel):
     capacity_message: str
     near_full_threshold: float
     almost_full_threshold: float
+    max_guest_slots: int = 0
+    available_guest_slots: int = 0
+    guest_capacity_status: str = "normal"
+    guest_capacity_message: str = ""
+    max_monthly_slots: int = 0
+    available_monthly_slots: int = 0
+    monthly_capacity_status: str = "normal"
+    monthly_capacity_message: str = ""
 
 
 class ParkingCheckoutRequest(BaseModel):

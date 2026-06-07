@@ -384,6 +384,26 @@ def build_capacity_status(total_in_bay: int, max_slots: int, near_full_threshold
     }
 
 
+def count_open_sessions_by_ticket_type(db: Session) -> Tuple[int, int]:
+    open_sessions = (
+        db.query(models.ParkingSession)
+        .filter(
+            models.ParkingSession.time_out.is_(None),
+            models.ParkingSession.match_status != "ignored",
+        )
+        .all()
+    )
+    guest_count = 0
+    monthly_count = 0
+    for session in open_sessions:
+        ticket_type = resolve_session_ticket_type(db, session)
+        if ticket_type == "monthly":
+            monthly_count += 1
+        else:
+            guest_count += 1
+    return guest_count, monthly_count
+
+
 def resolve_vehicle_type(db: Session, plate_norm: str) -> Tuple[str, str]:
     if not plate_norm or not ai_service.is_valid_vn_plate(plate_norm):
         return "unknown", "Bien so khong hop le"
@@ -488,6 +508,8 @@ def validate_rfid_for_scan(
     if not card:
         return None, "Khong tim thay the RFID"
     if not card.is_active:
+        if gate_type == "exit":
+            return None, "Thẻ RFID đã bị khóa. Cần bảo vệ xác nhận thủ công để cho xe ra."
         return None, "The RFID da bi khoa"
     if card.expired_at and card.expired_at < get_vietnam_now():
         return None, "The RFID da het han"
@@ -595,12 +617,31 @@ async def process_gate_scan(
 
         # Kiểm tra giới hạn sức chứa bãi xe
         if action == "open":
-            max_slots = int(get_system_config_value(db, "max_parking_slots", 50))
-            active_vehicles_count = (
+            duplicate_open_session = (
                 db.query(models.ParkingSession)
-                .filter(models.ParkingSession.time_out.is_(None))
-                .count()
+                .filter(
+                    models.ParkingSession.plate_number == recognized_plate,
+                    models.ParkingSession.time_out.is_(None),
+                    models.ParkingSession.match_status != "ignored",
+                )
+                .order_by(models.ParkingSession.time_in.desc())
+                .first()
             )
+            if duplicate_open_session and trigger_type != "manual":
+                action = "ignore"
+                can_open = False
+                vehicle_msg = f"Biển số {recognized_plate} đang có phiên trong bãi, không cho vào thêm."
+
+        if action == "open":
+            guest_count, monthly_count = count_open_sessions_by_ticket_type(db)
+            target_type = rfid_card_type or vehicle_type
+            if target_type == "monthly":
+                max_slots = int(get_system_config_value(db, "max_monthly_slots", get_system_config_value(db, "max_parking_slots", 50)))
+                active_vehicles_count = monthly_count
+            else:
+                max_slots = int(get_system_config_value(db, "max_guest_slots", get_system_config_value(db, "max_parking_slots", 50)))
+                active_vehicles_count = guest_count
+
             capacity = build_capacity_status(active_vehicles_count, max_slots)
             if capacity["capacity_status"] == "full":
                 # Nếu không phải manual trigger thì chặn mở barrier
@@ -1146,6 +1187,8 @@ MSG_MANUAL_OPEN_MQTT = "Đã mở cổng thủ công thành công qua MQTT."
 MSG_MANUAL_OPEN_HTTP = "Mở cổng {gate_type} thủ công từ xa thành công."
 MSG_RFID_ONLY_EXIT = "Camera không đọc được biển số, hệ thống cho ra theo RFID dự phòng."
 MSG_RFID_ONLY_EXIT_DISABLED = "Camera không đọc được biển số. Chế độ cho ra dự phòng bằng RFID đang tắt."
+FIRE_GATE_OPEN_COOLDOWN_SECONDS = 30.0
+_last_fire_gate_open_at = 0.0
 
 # Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
 # Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
@@ -1413,12 +1456,14 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
             db.add(alert)
             db.commit()
             db.refresh(alert)
+            gate_opened = handle_critical_fire_gate_open()
             
             await notify_clients("fire_alert", {
                 "id": alert.id,
                 "sensor_id": alert.sensor_id,
                 "message": alert.message,
-                "timestamp": alert.created_at.isoformat()
+                "timestamp": alert.created_at.isoformat(),
+                "gate_opened": gate_opened,
             })
 
     except Exception as e:
@@ -1973,6 +2018,7 @@ async def handle_fire_alert(
     db.add(alert)
     db.commit()
     db.refresh(alert)
+    gate_opened = handle_critical_fire_gate_open()
 
     # Broadcast cảnh báo lên WebSocket
     await notify_clients("fire_alert", {
@@ -1981,6 +2027,7 @@ async def handle_fire_alert(
         "message": alert.message,
         "level": alert.level,
         "from_esp32": True,
+        "gate_opened": gate_opened,
     })
 
     return schemas.FireAlertResponse(
@@ -2724,6 +2771,20 @@ def export_parking_history(db: Session = Depends(get_db)):
 
 
 # ============ FIRE ALERTS ============
+def handle_critical_fire_gate_open() -> bool:
+    global _last_fire_gate_open_at
+    now = time_module.time()
+    if now - _last_fire_gate_open_at < FIRE_GATE_OPEN_COOLDOWN_SECONDS:
+        return False
+    if not mqtt_manager.is_connected:
+        logger.warning("Fire critical gate open skipped because MQTT is disconnected")
+        return False
+    mqtt_manager.publish_open_gate("esp32-barrier-01", "in")
+    mqtt_manager.publish_open_gate("esp32-barrier-01", "out")
+    _last_fire_gate_open_at = now
+    return True
+
+
 @app.post("/api/fire-alerts", response_model=schemas.FireAlert)
 async def create_fire_alert(payload: schemas.FireAlertCreate, db: Session = Depends(get_db)):
     alert = models.FireAlert(
@@ -2734,13 +2795,16 @@ async def create_fire_alert(payload: schemas.FireAlertCreate, db: Session = Depe
     db.add(alert)
     db.commit()
     db.refresh(alert)
+
+    gate_opened = handle_critical_fire_gate_open() if payload.level == "critical" else False
     
     # Thông báo hỏa hoạn qua WebSocket ngay lập tức
     await notify_clients("fire_alert", {
         "id": alert.id,
         "sensor_id": alert.sensor_id,
         "message": alert.message,
-        "level": alert.level
+        "level": alert.level,
+        "gate_opened": gate_opened,
     })
     
     return alert
@@ -2814,17 +2878,34 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
     total_fee = sum(row[0] or 0 for row in today_revenue)
 
     max_slots = int(get_system_config_value(db, "max_parking_slots", 50))
+    max_guest_slots = int(get_system_config_value(db, "max_guest_slots", max_slots))
+    max_monthly_slots = int(get_system_config_value(db, "max_monthly_slots", max_slots))
     near_full_threshold = get_system_config_value(db, "parking_near_full_threshold", 0.7)
     almost_full_threshold = get_system_config_value(db, "parking_almost_full_threshold", 0.9)
+    guest_in_bay, monthly_in_bay = count_open_sessions_by_ticket_type(db)
     capacity = build_capacity_status(
         total_in_bay,
         max_slots,
         near_full_threshold=near_full_threshold,
         almost_full_threshold=almost_full_threshold,
     )
+    guest_capacity = build_capacity_status(
+        guest_in_bay,
+        max_guest_slots,
+        near_full_threshold=near_full_threshold,
+        almost_full_threshold=almost_full_threshold,
+    )
+    monthly_capacity = build_capacity_status(
+        monthly_in_bay,
+        max_monthly_slots,
+        near_full_threshold=near_full_threshold,
+        almost_full_threshold=almost_full_threshold,
+    )
 
     return schemas.DashboardStats(
         total_in_bay=total_in_bay,
+        guest_in_bay=guest_in_bay,
+        monthly_in_bay=monthly_in_bay,
         today_total_in=today_total_in,
         today_total_out=today_total_out,
         today_revenue=total_fee,
@@ -2835,5 +2916,13 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
         capacity_message=capacity["capacity_message"],
         near_full_threshold=capacity["near_full_threshold"],
         almost_full_threshold=capacity["almost_full_threshold"],
+        max_guest_slots=guest_capacity["max_slots"],
+        available_guest_slots=guest_capacity["available_slots"],
+        guest_capacity_status=guest_capacity["capacity_status"],
+        guest_capacity_message=guest_capacity["capacity_message"],
+        max_monthly_slots=monthly_capacity["max_slots"],
+        available_monthly_slots=monthly_capacity["available_slots"],
+        monthly_capacity_status=monthly_capacity["capacity_status"],
+        monthly_capacity_message=monthly_capacity["capacity_message"],
     )
 
