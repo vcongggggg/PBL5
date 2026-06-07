@@ -184,6 +184,15 @@ def levenshtein_distance(s1: str, s2: str) -> int:
         prev_row = curr_row
     return prev_row[-1]
 
+
+def cleanup_expired_pending_scans_once(db: Session, max_age_seconds: int = 120) -> int:
+    cutoff = get_vietnam_now() - timedelta(seconds=max_age_seconds)
+    deleted = db.query(models.PendingScan).filter(models.PendingScan.created_at < cutoff).delete()
+    if deleted:
+        db.commit()
+    return deleted
+
+
 async def cleanup_expired_pending_scans_loop():
     """
     Background task chạy tuần kỳ mỗi 60 giây để dọn dẹp các PendingScan bị treo quá 2 phút.
@@ -194,12 +203,8 @@ async def cleanup_expired_pending_scans_loop():
             await asyncio.sleep(60)
             db = SessionLocal()
             try:
-                now_dt = get_vietnam_now()
-                cutoff = now_dt - timedelta(seconds=120)
-                # Xóa các pending scan cũ hơn 2 phút
-                deleted = db.query(models.PendingScan).filter(models.PendingScan.created_at < cutoff).delete()
+                deleted = cleanup_expired_pending_scans_once(db)
                 if deleted > 0:
-                    db.commit()
                     logger.info(f"[CLEANUP] Đã tự động dọn dẹp {deleted} pending scans hết hạn.")
             except Exception as e:
                 logger.error(f"[CLEANUP] Lỗi khi dọn dẹp pending scans: {e}")
@@ -2509,7 +2514,7 @@ async def force_checkout(
     session.time_out = now
     session.fee = fee
     session.plate_out = plate_norm
-    session.match_status = "force_checkout"
+    session.match_status = "manual"
 
     # Cập nhật trạng thái thẻ RFID thành "available" khi force checkout
     if session.rfid_tag:
