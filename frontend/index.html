@@ -277,6 +277,27 @@
             <p class="text-xs text-on-surface-variant/80">Quản lý đóng mở thanh chắn barie và ghi nhận luồng vào/ra camera AI.</p>
         </div>
 
+        <div id="liveCapacityPanel" class="bg-surface-card border border-border-subtle/70 rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm">
+            <div class="flex items-center gap-3">
+                <div id="liveCapacityIcon" class="w-10 h-10 rounded-lg bg-primary/10 text-primary flex items-center justify-center">
+                    <span class="material-symbols-outlined text-xl">local_parking</span>
+                </div>
+                <div>
+                    <p class="text-[10px] font-bold text-on-surface-variant/60 uppercase tracking-widest">Suc chua bai do</p>
+                    <p id="liveCapacityMessage" class="text-sm font-bold text-on-surface">Dang tai du lieu suc chua</p>
+                </div>
+            </div>
+            <div class="min-w-[220px]">
+                <div class="flex justify-between items-center text-[10px] font-bold text-on-surface-variant/70 mb-1">
+                    <span id="liveCapacityCount">- / - xe</span>
+                    <span id="liveCapacityPercent">-%</span>
+                </div>
+                <div class="w-full bg-surface-container-low h-2 rounded-full overflow-hidden">
+                    <div id="liveCapacityBar" class="bg-primary h-full w-0 transition-all duration-500"></div>
+                </div>
+            </div>
+        </div>
+
         <div class="grid grid-cols-1 xl:grid-cols-2 gap-stack-lg">
             <!-- Lane In -->
             <div class="bg-surface-card rounded-xl border border-border-subtle shadow-sm overflow-hidden flex flex-col hover:shadow-md transition-shadow duration-300" id="panel-entry">

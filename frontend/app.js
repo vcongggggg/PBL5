@@ -453,6 +453,49 @@ async function fetchDashboard() {
             };
             capacityBar.className = `${barClassMap[capacityStatus] || barClassMap.normal} h-full transition-all duration-500`;
         }
+
+        const liveCapacityPanel = document.getElementById("liveCapacityPanel");
+        const liveCapacityIcon = document.getElementById("liveCapacityIcon");
+        const liveCapacityMessage = document.getElementById("liveCapacityMessage");
+        const liveCapacityCount = document.getElementById("liveCapacityCount");
+        const liveCapacityPercent = document.getElementById("liveCapacityPercent");
+        const liveCapacityBar = document.getElementById("liveCapacityBar");
+        const liveToneMap = {
+            normal: {
+                panel: "bg-surface-card border-border-subtle/70",
+                icon: "bg-primary/10 text-primary",
+                bar: "bg-primary",
+            },
+            near_full: {
+                panel: "bg-warning/5 border-warning/30",
+                icon: "bg-warning/10 text-warning",
+                bar: "bg-warning",
+            },
+            almost_full: {
+                panel: "bg-orange-500/5 border-orange-500/30",
+                icon: "bg-orange-500/10 text-orange-500",
+                bar: "bg-orange-500",
+            },
+            full: {
+                panel: "bg-rose-500/5 border-rose-500/40",
+                icon: "bg-rose-500/10 text-rose-500",
+                bar: "bg-rose-500",
+            },
+        };
+        const tone = liveToneMap[capacityStatus] || liveToneMap.normal;
+        const percent = data.occupancy_percent !== undefined
+            ? Math.min(100, Math.max(0, Number(data.occupancy_percent)))
+            : Math.min(100, Math.max(0, (data.total_in_bay / maxSlots) * 100));
+
+        if (liveCapacityPanel && liveCapacityIcon && liveCapacityMessage && liveCapacityCount && liveCapacityPercent && liveCapacityBar) {
+            liveCapacityPanel.className = `border rounded-xl p-4 flex flex-col md:flex-row md:items-center justify-between gap-3 shadow-sm ${tone.panel}`;
+            liveCapacityIcon.className = `w-10 h-10 rounded-lg flex items-center justify-center ${tone.icon}`;
+            liveCapacityMessage.textContent = capacityMessage;
+            liveCapacityCount.textContent = `${data.total_in_bay} / ${maxSlots} xe`;
+            liveCapacityPercent.textContent = `${percent.toFixed(1)}%`;
+            liveCapacityBar.style.width = `${percent}%`;
+            liveCapacityBar.className = `${tone.bar} h-full transition-all duration-500`;
+        }
     } catch (err) {
         console.error(err);
     }
