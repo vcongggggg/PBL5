@@ -57,8 +57,25 @@ input:focus, select:focus, textarea:focus {
 }
 
 .pf-sidebar {
+    background:
+        radial-gradient(circle at 22% 8%, rgba(13, 148, 136, 0.16), transparent 30%),
+        linear-gradient(180deg, #0d1412 0%, #0a0f0e 100%) !important;
     border-right: 1px solid rgba(13, 148, 136, 0.28) !important;
     box-shadow: inset -1px 0 0 rgba(45, 212, 191, 0.08), 8px 0 36px rgba(13, 148, 136, 0.06);
+}
+
+.pf-sidebar a,
+.pf-sidebar .text-sidebar-text\/60 {
+    color: rgba(248, 250, 252, 0.64) !important;
+}
+
+.pf-sidebar a:hover,
+.pf-sidebar .sidebar-active {
+    color: #ffffff !important;
+}
+
+.pf-sidebar .material-symbols-outlined {
+    color: currentColor;
 }
 
 .pf-logo-mark {
@@ -167,10 +184,22 @@ h2, .pf-section-heading {
     width: 56px;
     height: 18px;
     border-radius: 9999px;
-    background:
-        linear-gradient(135deg, transparent 40%, currentColor 41%, currentColor 45%, transparent 46%),
-        linear-gradient(45deg, transparent 54%, currentColor 55%, currentColor 59%, transparent 60%);
-    opacity: 0.42;
+    position: relative;
+    opacity: 0.55;
+    overflow: hidden;
+}
+
+.pf-sparkline::before {
+    content: "";
+    position: absolute;
+    left: 4px;
+    right: 4px;
+    top: 9px;
+    height: 2px;
+    border-radius: 9999px;
+    background: currentColor;
+    transform: skewX(-28deg);
+    box-shadow: 18px -5px 0 -0.5px currentColor, 36px -1px 0 -0.5px currentColor;
 }
 
 .pf-skeleton {
