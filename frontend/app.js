@@ -341,6 +341,26 @@ async function sendScan(gate, triggerType, rfidTag = "") {
     return data;
 }
 
+async function sendSensorEvent(gate) {
+    const sourceId = `${gate}-sensor-ui`;
+    const payload = {
+        gate_type: gate,
+        trigger_type: "sensor",
+        source_id: sourceId,
+        rfid_tag: null,
+    };
+    const res = await fetch(`${API_BASE}/api/gates/sensor-event`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.detail || "Sensor event failed");
+    }
+    return data;
+}
+
 async function triggerAndScan(gate, triggerType) {
     const cfg = gateState[gate];
     if (!cfg) return;
@@ -352,6 +372,16 @@ async function triggerAndScan(gate, triggerType) {
     }
 
     try {
+        if (triggerType === "sensor") {
+            setStatus(gate, "Đã kích hoạt cảm biến, đang bám biển số...", "warn");
+            const data = await sendSensorEvent(gate);
+            if (data?.message) {
+                setStatus(gate, data.message, "warn");
+            }
+            await fetchDashboard();
+            return;
+        }
+
         setStatus(gate, `Đang truyền tín hiệu vật lý ${triggerType}...`, "warn");
         await sendTrigger(gate, triggerType, rfidTag);
 

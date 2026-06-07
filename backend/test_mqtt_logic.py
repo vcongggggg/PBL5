@@ -3,7 +3,7 @@ import os
 import sys
 import asyncio
 from datetime import datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Đảm bảo import được backend app
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -15,7 +15,7 @@ from app.database import Base
 from app.main import app, get_vietnam_now, handle_mqtt_event, bg_process_esp_event, process_gate_scan
 import app.models as models
 import app.main as main_module
-from app.main import force_open_gate
+from app.main import force_open_gate, gate_sensor_event
 
 SQLALCHEMY_DATABASE_URL = "sqlite:///./test_pbl5.db"
 engine = create_engine(SQLALCHEMY_DATABASE_URL, connect_args={"check_same_thread": False})
@@ -632,6 +632,36 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(first["status"], "ok")
         self.assertEqual(second["status"], "gate_open")
         self.assertIn("đang mở", second["message"].lower())
+
+    async def test_16_ui_sensor_event_uses_background_tracking(self):
+        payload = main_module.schemas.GateTriggerRequest(
+            gate_type="entry",
+            trigger_type="sensor",
+            source_id="entry-sensor-ui",
+            rfid_tag=None,
+        )
+
+        created_tasks = []
+
+        def capture_task(coro):
+            created_tasks.append(coro)
+            coro.close()
+            return MagicMock()
+
+        with patch("app.main.asyncio.create_task", side_effect=capture_task):
+            response = await gate_sensor_event(payload=payload, db=self.db)
+
+        self.assertEqual(response["status"], "processing")
+        self.assertEqual(response["gate_type"], "entry")
+        self.assertEqual(len(created_tasks), 1)
+
+        pending = self.db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
+        self.assertIsNotNone(pending)
+        self.assertEqual(pending.plate_number, "PROCESSING")
+
+        pending_notifications = [data for event, data in self.notifications if event == "pending_scan"]
+        self.assertTrue(pending_notifications)
+        self.assertIn("bám biển số", pending_notifications[-1]["message"].lower())
 
 if __name__ == "__main__":
     unittest.main()

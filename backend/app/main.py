@@ -1064,6 +1064,58 @@ async def gate_scan(
     )
 
 
+@app.post("/api/gates/sensor-event")
+async def gate_sensor_event(payload: schemas.GateTriggerRequest, db: Session = Depends(get_db)):
+    gate_type = payload.gate_type.lower()
+    if gate_type not in ["entry", "exit"]:
+        raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
+
+    direction = "in" if gate_type == "entry" else "out"
+    scan_token = uuid.uuid4().hex
+    device_id = payload.source_id or f"{gate_type}-sensor-ui"
+
+    try:
+        db.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
+        pending = models.PendingScan(
+            gate_type=gate_type,
+            plate_number="PROCESSING",
+            confidence=0.0,
+            image_path=None,
+            device_id=device_id,
+            scan_token=scan_token,
+        )
+        db.add(pending)
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error inserting PROCESSING pending scan from UI sensor: {e}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Khong the tao phien quet cam bien")
+
+    asyncio.create_task(
+        bg_process_esp_event(
+            direction=direction,
+            gate_type=gate_type,
+            device_id=device_id,
+            scan_token=scan_token,
+        )
+    )
+
+    await notify_clients("pending_scan", {
+        "gate_type": gate_type,
+        "recognized_plate": "PROCESSING",
+        "confidence": 0.0,
+        "message": "Đang bám biển số, vui lòng giữ xe trong vùng camera...",
+    })
+
+    return {
+        "status": "processing",
+        "gate_type": gate_type,
+        "direction": direction,
+        "scan_token": scan_token,
+        "message": "Đã kích hoạt cảm biến giả lập, hệ thống đang bám biển số.",
+    }
+
+
 # ============ ESP32 ENDPOINTS ============
 @app.post("/api/esp/register")
 def register_esp_ip(request: Request):
