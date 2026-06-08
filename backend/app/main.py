@@ -2811,6 +2811,54 @@ async def reset_fire_alarm(api_key: str = Depends(verify_api_key)):
             detail=f"Không thể kết nối ESP32 để reset fire alarm: {body}",
         )
 
+@app.get("/api/parking/open-sessions/search")
+def search_open_parking_sessions(q: str = "", limit: int = 8, db: Session = Depends(get_db)):
+    query_norm = ai_service.normalize_plate(q or "")
+    safe_limit = max(1, min(int(limit or 8), 20))
+    sessions = (
+        db.query(models.ParkingSession)
+        .filter(models.ParkingSession.time_out.is_(None))
+        .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
+        .limit(200)
+        .all()
+    )
+
+    results = []
+    for session in sessions:
+        plate_norm = ai_service.normalize_plate(session.plate_number or "")
+        if query_norm:
+            distance = levenshtein_distance(query_norm, plate_norm)
+            contains = query_norm in plate_norm
+            prefix = plate_norm.startswith(query_norm)
+            if not contains and not prefix and distance > 3:
+                continue
+        else:
+            distance = 0
+            contains = False
+            prefix = False
+
+        if prefix:
+            score = 0
+        elif contains:
+            score = 1
+        else:
+            score = 2 + distance
+
+        results.append({
+            "session_id": session.id,
+            "plate_number": session.plate_number,
+            "rfid_tag": session.rfid_tag,
+            "time_in": session.time_in,
+            "ticket_type": resolve_session_ticket_type(db, session),
+            "image_url": image_url_from_path(session.image_path),
+            "distance": distance,
+            "score": score,
+        })
+
+    results.sort(key=lambda item: (item["score"], item["distance"], item["time_in"]), reverse=False)
+    return results[:safe_limit]
+
+
 @app.get("/api/parking-history", response_model=List[schemas.ParkingHistoryItem])
 def list_parking_history(limit: int = 100, db: Session = Depends(get_db)):
     sessions = (

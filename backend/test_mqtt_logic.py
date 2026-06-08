@@ -1265,7 +1265,24 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIsNone(wrong_session.time_out)
         self.assertEqual(session.match_status, "manual")
 
-    async def test_47_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
+    def test_47_open_session_search_supports_partial_and_fuzzy_plate(self):
+        card = self.add_guest_card("SEARCHRFID", status="in_use")
+        self.add_open_session("43A1985", "SEARCHRFID", card)
+        closed_card = self.add_guest_card("CLOSEDRFID", status="available")
+        closed = self.add_open_session("43A7777", "CLOSEDRFID", closed_card)
+        closed.time_out = get_vietnam_now()
+        self.db.commit()
+
+        partial = main_module.search_open_parking_sessions(q="43A19", db=self.db)
+        self.assertEqual(partial[0]["plate_number"], "43A1985")
+        self.assertEqual(partial[0]["rfid_tag"], "SEARCHRFID")
+
+        fuzzy = main_module.search_open_parking_sessions(q="43A1986", db=self.db)
+        self.assertEqual(fuzzy[0]["plate_number"], "43A1985")
+        self.assertGreaterEqual(fuzzy[0]["distance"], 1)
+        self.assertFalse(any(row["plate_number"] == "43A7777" for row in fuzzy))
+
+    async def test_48_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
         for key in ["max_parking_slots", "max_guest_slots"]:
             cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
             cfg.value = "0"
@@ -1287,7 +1304,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(unknown.action, "ignore")
 
-    async def test_48_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
+    async def test_49_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
         main_module.ESP_EVENT_COOLDOWN_SECONDS = 1
         created_tasks = []
 
@@ -1312,7 +1329,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(alert)
         self.assertTrue(alert.message)
 
-    def test_49_dashboard_yesterday_entry_today_exit_and_type_counts(self):
+    def test_50_dashboard_yesterday_entry_today_exit_and_type_counts(self):
         now = get_vietnam_now()
         self.db.add(models.ParkingSession(
             plate_number="51F93931",
@@ -1338,7 +1355,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.guest_in_bay, 1)
         self.assertEqual(stats.monthly_in_bay, 1)
 
-    def test_50_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
+    def test_51_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
         self.db.add(models.FireAlert(sensor_id="fire-warn", level="warning", message="Smoke"))
         self.db.add(models.FireAlert(sensor_id="fire-critical", level="critical", message="Fire"))
         self.db.commit()

@@ -508,16 +508,111 @@ function getGateRfidCandidate(gate) {
     return (candidates.find((value) => value && value !== "-" && value !== "UNKNOWN") || "").trim();
 }
 
+async function searchOpenSessions(query) {
+    const res = await fetch(`${API_BASE}/api/parking/open-sessions/search?q=${encodeURIComponent(query || "")}&limit=8`);
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.detail || "Khong tim duoc danh sach xe dang trong bai");
+    }
+    return data;
+}
+
+function showOpenSessionPicker(initialQuery = "") {
+    return new Promise((resolve) => {
+        const oldModal = document.getElementById("openSessionPickerModal");
+        if (oldModal) oldModal.remove();
+
+        const modal = document.createElement("div");
+        modal.id = "openSessionPickerModal";
+        modal.className = "fixed inset-0 z-[10000] bg-slate-950/70 backdrop-blur-[2px] flex items-center justify-center p-4";
+        modal.innerHTML = `
+            <div class="w-full max-w-2xl bg-white dark:bg-slate-950 border border-teal-500/40 rounded-xl shadow-2xl overflow-hidden text-slate-950 dark:text-white">
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-teal-50 dark:bg-teal-950/30">
+                    <p class="text-[10px] uppercase tracking-[0.14em] text-teal-700 dark:text-teal-300 font-bold">Tìm xe đang trong bãi</p>
+                    <h3 class="text-base font-extrabold mt-1">Chọn session cần giải phóng</h3>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">Dùng khi mất RFID hoặc AI đọc sai biển số. Hãy đối chiếu biển/ảnh lúc vào trước khi xác nhận.</p>
+                </div>
+                <div class="p-4">
+                    <input id="openSessionSearchInput" value="${initialQuery || ""}" class="w-full px-3 py-2 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-sm outline-none focus:ring-2 focus:ring-teal-500/30" placeholder="Nhập một phần biển số, ví dụ 43A78" />
+                    <div id="openSessionSearchResults" class="mt-3 grid gap-2 max-h-[360px] overflow-y-auto"></div>
+                </div>
+                <div class="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                    <button type="button" data-picker-cancel class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">Hủy</button>
+                </div>
+            </div>
+        `;
+
+        const input = modal.querySelector("#openSessionSearchInput");
+        const resultsEl = modal.querySelector("#openSessionSearchResults");
+        let debounceTimer = null;
+
+        const close = (value) => {
+            modal.remove();
+            resolve(value);
+        };
+
+        const renderResults = async () => {
+            const query = input.value.trim();
+            resultsEl.innerHTML = `<div class="text-xs text-slate-500 py-3">Đang tìm...</div>`;
+            try {
+                const rows = await searchOpenSessions(query);
+                if (!rows.length) {
+                    resultsEl.innerHTML = `<div class="text-xs text-slate-500 py-3">Không tìm thấy session đang mở phù hợp.</div>`;
+                    return;
+                }
+                resultsEl.innerHTML = rows.map((row) => `
+                    <button type="button" data-session-plate="${row.plate_number || ""}" data-session-rfid="${row.rfid_tag || ""}" class="text-left grid grid-cols-[96px_1fr] gap-3 p-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-500 hover:bg-teal-50 dark:hover:bg-teal-950/40 transition-all">
+                        <div class="h-16 rounded-md bg-slate-200 dark:bg-slate-800 overflow-hidden flex items-center justify-center">
+                            ${row.image_url ? `<img src="${API_BASE}${row.image_url}?t=${Date.now()}" class="w-full h-full object-contain" />` : `<span class="text-[10px] text-slate-500">Không có ảnh</span>`}
+                        </div>
+                        <div>
+                            <div class="font-mono text-base font-extrabold">${row.plate_number || "-"}</div>
+                            <div class="text-xs text-slate-600 dark:text-slate-300 mt-1">RFID: ${row.rfid_tag || "-"} | Sai lệch: ${row.distance ?? "-"}</div>
+                            <div class="text-xs text-slate-500 mt-1">Vào lúc: ${row.time_in ? new Date(row.time_in).toLocaleString("vi-VN") : "-"}</div>
+                        </div>
+                    </button>
+                `).join("");
+            } catch (err) {
+                resultsEl.innerHTML = `<div class="text-xs text-rose-600 py-3">${err.message}</div>`;
+            }
+        };
+
+        input.addEventListener("input", () => {
+            clearTimeout(debounceTimer);
+            debounceTimer = setTimeout(renderResults, 250);
+        });
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal || event.target.closest("[data-picker-cancel]")) {
+                close(null);
+                return;
+            }
+            const rowBtn = event.target.closest("[data-session-plate]");
+            if (rowBtn) {
+                close({
+                    plate: rowBtn.dataset.sessionPlate || "",
+                    rfidTag: rowBtn.dataset.sessionRfid || "",
+                });
+            }
+        });
+        document.body.appendChild(modal);
+        input.focus();
+        renderResults();
+    });
+}
+
 async function forceCheckoutFromMonitoring(gate, reason) {
     if (gate !== "exit") {
         alert("Giai phong xe chi ap dung cho lan ra. Lan vao chi nen dung 'open_only' hoac 'emergency'.");
         return false;
     }
 
-    const rfidTag = getGateRfidCandidate(gate);
+    let rfidTag = getGateRfidCandidate(gate);
     let plate = getGatePlateCandidate(gate);
-    if (!plate && !rfidTag) {
-        plate = (window.prompt("Nhap bien so xe can giai phong:", "") || "").trim();
+    if (!rfidTag && (reason === "lost_card" || reason === "system_error" || !plate)) {
+        const selectedSession = await showOpenSessionPicker(plate);
+        if (!selectedSession) return false;
+        plate = selectedSession.plate || "";
+        rfidTag = selectedSession.rfidTag || "";
     }
     if (!plate && !rfidTag) return false;
 
