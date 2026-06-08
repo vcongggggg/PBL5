@@ -472,6 +472,7 @@ def calculate_fee(now: datetime, session: models.ParkingSession, db: Session, ti
 def normalize_manual_reason(reason: str) -> str:
     allowed_reasons = {
         "verified_plate",
+        "verified_entry",
         "lost_card",
         "system_error",
         "manual_override",

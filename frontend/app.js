@@ -413,13 +413,14 @@ async function triggerAndScan(gate, triggerType) {
 }
 
 const MANUAL_OPEN_REASONS = {
-    open_only: "Chi mo cong, khong xu ly session",
-    verified_plate: "Da doi chieu bien so bang mat",
-    lost_card: "Mat RFID, giai phong xe va thu phi den bu",
-    manual_override: "Bao ve xac nhan thu cong",
-    emergency: "Mo khan cap",
-    maintenance: "Kiem tra/bao tri thiet bi",
-    system_error: "Camera/cam bien/he thong loi"
+    open_only: "Chỉ mở cổng",
+    verified_entry: "Cho xe vào sau khi xác minh",
+    verified_plate: "Biển số đúng, cho xe ra",
+    lost_card: "Mất RFID, giải phóng xe",
+    manual_override: "Bảo vệ xác nhận thủ công",
+    emergency: "Mở khẩn cấp",
+    maintenance: "Kiểm tra/bảo trì thiết bị",
+    system_error: "Camera/cảm biến/hệ thống lỗi"
 };
 
 function askManualOpenReason(gate) {
@@ -427,35 +428,43 @@ function askManualOpenReason(gate) {
         const oldModal = document.getElementById("manualOpenReasonModal");
         if (oldModal) oldModal.remove();
 
-        const options = [
-            ["open_only", "Chi mo cong", "Khong dong session, khong tinh phi"],
-            ["verified_plate", "Bien so dung", "Dong session xe dang hien thi va mo cong"],
-            ["lost_card", "Mat RFID", "Dong session, tinh phi den bu va mo cong"],
-            ["system_error", "Loi he thong", "Camera/cam bien loi, bao ve xac nhan cho ra"],
-            ["emergency", "Mo khan cap", "Chi mo cong trong tinh huong khan cap"],
-            ["maintenance", "Bao tri", "Chi mo cong de kiem tra thiet bi"],
+        const entryOptions = [
+            ["open_only", "Chỉ mở cổng vào", "Không tạo phiên, dùng khi cần mở thử hoặc xử lý nhanh."],
+            ["verified_entry", "Cho xe vào sau khi xác minh", "Bảo vệ đã nhìn biển/thẻ và quyết định cho xe vào thủ công."],
+            ["system_error", "Lỗi camera/cảm biến làn vào", "Mở cổng vào do hệ thống không nhận diện được nhưng bảo vệ đã kiểm tra."],
+            ["emergency", "Mở khẩn cấp", "Ưu tiên an toàn, không xử lý phiên gửi xe."],
+            ["maintenance", "Bảo trì", "Mở cổng để kiểm tra servo, barrier hoặc cảm biến."],
         ];
+        const exitOptions = [
+            ["open_only", "Chỉ mở cổng ra", "Không đóng session, không tính phí."],
+            ["verified_plate", "Biển số đúng, cho xe ra", "Đóng session xe đang hiển thị và mở cổng ra."],
+            ["lost_card", "Mất RFID", "Đóng session, tính phí gửi xe + phí đền bù RFID."],
+            ["system_error", "Lỗi camera/cảm biến làn ra", "Bảo vệ xác nhận thực tế, đóng session và mở cổng ra."],
+            ["emergency", "Mở khẩn cấp", "Chỉ mở cổng trong tình huống khẩn cấp."],
+            ["maintenance", "Bảo trì", "Mở cổng để kiểm tra thiết bị."],
+        ];
+        const options = gate === "exit" ? exitOptions : entryOptions;
 
         const modal = document.createElement("div");
         modal.id = "manualOpenReasonModal";
-        modal.className = "fixed inset-0 z-[9999] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4";
+        modal.className = "fixed inset-0 z-[9999] bg-slate-950/70 backdrop-blur-[2px] flex items-center justify-center p-4";
         modal.innerHTML = `
-            <div class="w-full max-w-lg bg-surface-card border border-border-subtle rounded-xl shadow-2xl overflow-hidden">
-                <div class="px-5 py-4 border-b border-border-subtle/60">
-                    <p class="text-[10px] uppercase tracking-[0.14em] text-primary font-bold">Mo cong thu cong - ${gate === "exit" ? "Lan ra" : "Lan vao"}</p>
-                    <h3 class="text-base font-extrabold text-on-surface mt-1">Chon muc dich mo cong</h3>
-                    <p class="text-xs text-on-surface-variant/75 mt-1">Cac muc giai phong xe se dong session va ghi log thao tac cua bao ve.</p>
+            <div class="w-full max-w-lg bg-white dark:bg-slate-950 border border-teal-500/40 rounded-xl shadow-2xl overflow-hidden text-slate-950 dark:text-white">
+                <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-teal-50 dark:bg-teal-950/30">
+                    <p class="text-[10px] uppercase tracking-[0.14em] text-teal-700 dark:text-teal-300 font-bold">Mở cổng thủ công - ${gate === "exit" ? "Làn ra" : "Làn vào"}</p>
+                    <h3 class="text-base font-extrabold mt-1">Chọn mục đích mở cổng</h3>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">${gate === "exit" ? "Các mục cho xe ra có thể đóng session, tính phí và ghi log." : "Làn vào không giải phóng xe; chỉ ghi log lý do mở cổng."}</p>
                 </div>
                 <div class="p-4 grid gap-2">
                     ${options.map(([value, title, desc]) => `
-                        <button type="button" data-manual-reason="${value}" class="text-left px-4 py-3 rounded-lg border border-border-subtle/70 bg-surface-container-low hover:border-primary hover:bg-primary/10 transition-all">
-                            <span class="block text-sm font-bold text-on-surface">${title}</span>
-                            <span class="block text-xs text-on-surface-variant/75 mt-0.5">${desc}</span>
+                        <button type="button" data-manual-reason="${value}" class="text-left px-4 py-3 rounded-lg border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 hover:border-teal-500 hover:bg-teal-50 dark:hover:bg-teal-950/40 transition-all shadow-sm">
+                            <span class="block text-sm font-bold">${title}</span>
+                            <span class="block text-xs text-slate-600 dark:text-slate-300 mt-0.5">${desc}</span>
                         </button>
                     `).join("")}
                 </div>
-                <div class="px-4 py-3 bg-surface-container-low/60 border-t border-border-subtle/50 flex justify-end">
-                    <button type="button" data-manual-cancel class="px-4 py-2 rounded-lg border border-border-subtle text-xs font-bold text-on-surface hover:bg-surface-container-low transition-all">Huy</button>
+                <div class="px-4 py-3 bg-slate-50 dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 flex justify-end">
+                    <button type="button" data-manual-cancel class="px-4 py-2 rounded-lg border border-slate-300 dark:border-slate-700 text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-all">Hủy</button>
                 </div>
             </div>
         `;
