@@ -10,6 +10,13 @@ numpy
 opencv-python
 ultralytics
 paddleocr
+scikit-image
+lmdb
+rapidfuzz
+pyclipper
+shapely
+cython
+albumentations<2
 easyocr
 python-dotenv
 cv2-enumerate-cameras
