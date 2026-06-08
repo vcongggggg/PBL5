@@ -6,3 +6,7 @@ uploads/
 .env
 *.db
 firmware/esp32_barrier/image/
+TrainPaddle/Dataset/
+TrainPaddle/Datatest/
+TrainPaddle/ocr_train_work/
+TrainPaddle/pretrained/
