@@ -11,19 +11,20 @@ Firmware dieu khien mo hinh bai xe 2 cong:
 
 ## 1) Pin Map
 
-| Chuc nang | Chan ESP32 |
-|---|---|
-| Servo IN signal | `GPIO14` |
+| Chuc nang        | Chan ESP32 |
+| ---------------- | ---------- |
+| Servo IN signal  | `GPIO14` |
 | Servo OUT signal | `GPIO13` |
-| IR IN OUT | `GPIO27` |
-| IR OUT OUT | `GPIO26` |
-| Fire sensor DO | `GPIO33` |
-| Buzzer signal | `GPIO32` |
-| RC522 SS/SDA | `GPIO5` |
-| RC522 RST | `GPIO22` |
-| RC522 SCK | `GPIO18` |
-| RC522 MISO | `GPIO19` |
-| RC522 MOSI | `GPIO23` |
+| IR IN OUT        | `GPIO27` |
+| IR OUT OUT       | `GPIO26` |
+| Fire sensor DO   | `GPIO33` |
+| Fire sensor AO   | `GPIO34` |
+| Buzzer signal    | `GPIO32` |
+| RC522 SS/SDA     | `GPIO5`  |
+| RC522 RST        | `GPIO22` |
+| RC522 SCK        | `GPIO18` |
+| RC522 MISO       | `GPIO19` |
+| RC522 MOSI       | `GPIO23` |
 
 `GPIO25` hien khong su dung.
 
@@ -69,8 +70,11 @@ Firmware co loc nhieu IR: tin hieu phai giu LOW lien tuc `IR_CONFIRM_MS` moi gui
 ### Fire Sensor
 
 - `DO` -> `GPIO33`
+- `AO/A0` -> `GPIO34` de doc gia tri analog thuc te (ADC 0-4095)
 - `VCC` -> `3V3` hoac `5V` theo module
 - `GND` -> `GND chung`
+
+Neu cap module bang `5V`, chan `AO/A0` co the len gan 5V. ESP32 chi chiu toi da 3.3V o GPIO, vi vay can chia ap/level shifter truoc khi dua vao `GPIO34`. Neu cap module bang `3V3`, co the noi truc tiep `AO/A0` vao `GPIO34`.
 
 Firmware hien gia dinh cam bien chay active-low:
 
@@ -89,6 +93,7 @@ Neu buzzer an dong lon, nen dieu khien qua transistor/MOSFET thay vi noi truc ti
 - `parking/device/esp32-barrier-01/event/car_detected`
 - `parking/device/esp32-barrier-01/event/rfid_scan`
 - `parking/device/esp32-barrier-01/event/fire_alert`
+- `parking/device/esp32-barrier-01/event/fire_telemetry`
 - `parking/device/esp32-barrier-01/command/open_gate`
 - `parking/device/esp32-barrier-01/command/reset_fire`
 
