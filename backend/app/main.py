@@ -337,6 +337,14 @@ def get_config_text(db: Session, key: str, default: str = "") -> str:
     return str(config.value)
 
 
+def set_config_text(db: Session, key: str, value: str) -> None:
+    config = db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
+    if config:
+        config.value = value
+    else:
+        db.add(models.SystemConfig(key=key, value=value))
+
+
 def create_manual_gate_log(
     db: Session,
     gate_type: str,
@@ -1454,6 +1462,7 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
                 message=message or f"Fire sensor triggered (value={sensor_value})",
             )
             db.add(alert)
+            set_fire_alarm_active(db, True)
             db.commit()
             db.refresh(alert)
             gate_opened = handle_critical_fire_gate_open()
@@ -2016,6 +2025,7 @@ async def handle_fire_alert(
         message=payload.message or f"Fire sensor triggered (value={payload.sensor_value})",
     )
     db.add(alert)
+    set_fire_alarm_active(db, True)
     db.commit()
     db.refresh(alert)
     gate_opened = handle_critical_fire_gate_open()
@@ -2624,11 +2634,18 @@ async def reset_fire_alarm(api_key: str = Depends(verify_api_key)):
     """
     # 1. Gửi lệnh qua MQTT
     if mqtt_manager.is_connected:
+        db = SessionLocal()
+        try:
+            resolved_count = resolve_open_fire_alerts(db)
+        finally:
+            db.close()
         mqtt_manager.publish_reset_fire("esp32-barrier-01")
         await notify_clients("fire_reset", {
             "message": "Đã tắt báo động cháy qua MQTT. Hệ thống trở lại trạng thái bình thường.",
+            "resolved_count": resolved_count,
+            "fire_active": False,
         })
-        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua MQTT."}
+        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua MQTT.", "resolved_count": resolved_count}
 
     # 2. Gửi lệnh qua HTTP
     global esp32_ip
@@ -2657,10 +2674,17 @@ async def reset_fire_alarm(api_key: str = Depends(verify_api_key)):
     code, body = await run_in_threadpool(send_reset)
 
     if code == 200:
+        db = SessionLocal()
+        try:
+            resolved_count = resolve_open_fire_alerts(db)
+        finally:
+            db.close()
         await notify_clients("fire_reset", {
             "message": "Đã tắt báo động cháy qua HTTP. Hệ thống trở lại trạng thái bình thường.",
+            "resolved_count": resolved_count,
+            "fire_active": False,
         })
-        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua HTTP."}
+        return {"status": "ok", "message": "Đã gửi lệnh tắt báo động cháy thành công qua HTTP.", "resolved_count": resolved_count}
     else:
         raise HTTPException(
             status_code=502,
@@ -2771,6 +2795,25 @@ def export_parking_history(db: Session = Depends(get_db)):
 
 
 # ============ FIRE ALERTS ============
+def set_fire_alarm_active(db: Session, active: bool) -> None:
+    set_config_text(db, "fire_alarm_active", "1" if active else "0")
+
+
+def get_fire_alarm_active(db: Session) -> bool:
+    return get_config_bool(db, "fire_alarm_active", False)
+
+
+def resolve_open_fire_alerts(db: Session) -> int:
+    count = (
+        db.query(models.FireAlert)
+        .filter(models.FireAlert.is_acknowledged == False)  # noqa: E712
+        .update({models.FireAlert.is_acknowledged: True}, synchronize_session=False)
+    )
+    set_fire_alarm_active(db, False)
+    db.commit()
+    return int(count or 0)
+
+
 def handle_critical_fire_gate_open() -> bool:
     global _last_fire_gate_open_at
     now = time_module.time()
@@ -2793,6 +2836,8 @@ async def create_fire_alert(payload: schemas.FireAlertCreate, db: Session = Depe
         message=payload.message,
     )
     db.add(alert)
+    if payload.level == "critical":
+        set_fire_alarm_active(db, True)
     db.commit()
     db.refresh(alert)
 
@@ -2820,6 +2865,35 @@ def list_fire_alerts(
     if unacked_only:
         query = query.filter(models.FireAlert.is_acknowledged == False)  # noqa: E712
     return query.order_by(models.FireAlert.created_at.desc()).limit(limit).all()
+
+
+@app.get("/api/fire/status", response_model=schemas.FireStatus)
+def get_fire_status(db: Session = Depends(get_db)):
+    unacknowledged_count = (
+        db.query(models.FireAlert)
+        .filter(models.FireAlert.is_acknowledged == False)  # noqa: E712
+        .count()
+    )
+    critical_count = (
+        db.query(models.FireAlert)
+        .filter(
+            models.FireAlert.is_acknowledged == False,  # noqa: E712
+            models.FireAlert.level == "critical",
+        )
+        .count()
+    )
+    active = get_fire_alarm_active(db) or critical_count > 0
+    message = (
+        "ĐANG BÁO CHÁY - Cổng vào/ra đang được giữ mở cho đến khi bảo vệ reset."
+        if active
+        else "Hệ thống báo cháy đang bình thường."
+    )
+    return schemas.FireStatus(
+        active=active,
+        unacknowledged_count=unacknowledged_count,
+        critical_count=critical_count,
+        message=message,
+    )
 
 
 @app.patch("/api/fire-alerts/{alert_id}/ack", response_model=schemas.FireAlert)

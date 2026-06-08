@@ -81,7 +81,8 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             "manual_gate_open_seconds": "5",
             "allow_rfid_only_exit": "1",
             "parking_near_full_threshold": "0.7",
-            "parking_almost_full_threshold": "0.9"
+            "parking_almost_full_threshold": "0.9",
+            "fire_alarm_active": "0",
         }
         for k, v in configs.items():
             db_config = models.SystemConfig(key=k, value=v)
@@ -1044,6 +1045,23 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.today_total_in, 2)
         self.assertEqual(stats.today_total_out, 1)
         self.assertEqual(stats.today_revenue, 5000)
+
+    async def test_38_fire_status_and_reset_resolves_open_alerts(self):
+        await handle_mqtt_event("fire-reset-test", "fire_alert", {"sensor_value": 0, "message": "Lua"})
+        status = main_module.get_fire_status(db=self.db)
+        self.assertTrue(status.active)
+        self.assertEqual(status.critical_count, 1)
+
+        result = await main_module.reset_fire_alarm(api_key="pbl5_secure_key_12345")
+        self.assertEqual(result["status"], "ok")
+        mock_mqtt.publish_reset_fire.assert_called_with("esp32-barrier-01")
+
+        self.db.expire_all()
+        alert = self.db.query(models.FireAlert).filter(models.FireAlert.sensor_id == "fire-reset-test").first()
+        self.assertTrue(alert.is_acknowledged)
+        status_after = main_module.get_fire_status(db=self.db)
+        self.assertFalse(status_after.active)
+        self.assertEqual(status_after.unacknowledged_count, 0)
 
 if __name__ == "__main__":
     unittest.main()

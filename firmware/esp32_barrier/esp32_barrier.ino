@@ -12,6 +12,8 @@ bool irInEventSentWhileBlocked = false;
 bool irOutEventSentWhileBlocked = false;
 bool fireAlertActive = false;
 unsigned long lastFireAlertSentAt = 0;
+unsigned long fireLowStartedAt = 0;
+unsigned long fireHighStartedAt = 0;
 unsigned long lastIrInSentAt = 0;
 unsigned long lastIrOutSentAt = 0;
 unsigned long irInLowStartedAt = 0;
@@ -27,6 +29,8 @@ static const unsigned long RFID_EVENT_COOLDOWN_MS = 3000;
 void resetFireAlarmLocal() {
   Serial.println("[MQTT] Yêu cầu tắt báo động cháy (Reset Fire alarm) thành công.");
   fireAlertActive = false;
+  fireLowStartedAt = 0;
+  fireHighStartedAt = 0;
   setAlertRelays(false);
   buzzerFireAlarm(false);
   closeGateIn();
@@ -101,7 +105,20 @@ void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
   bool fireDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
 
-  if (fireDetected && !fireAlertActive) {
+  unsigned long now = millis();
+  if (fireDetected) {
+    fireHighStartedAt = 0;
+    if (fireLowStartedAt == 0) {
+      fireLowStartedAt = now;
+    }
+  } else {
+    fireLowStartedAt = 0;
+    if (fireAlertActive && fireHighStartedAt == 0) {
+      fireHighStartedAt = now;
+    }
+  }
+
+  if (fireDetected && !fireAlertActive && fireLowStartedAt > 0 && (now - fireLowStartedAt >= FIRE_CONFIRM_MS)) {
     fireAlertActive = true;
     Serial.println("PHÁT HIỆN HỎA HOẠN! Mở toàn bộ cổng + kích hoạt còi + đèn báo động!");
     openGateIn();
@@ -110,11 +127,15 @@ void handleFireSensor() {
     buzzerFireAlarm(true);  // Bật còi báo cháy liên tục
 
     // Gửi cảnh báo lên Backend qua MQTT (cooldown 10s)
-    unsigned long now = millis();
     if (now - lastFireAlertSentAt > FIRE_ALERT_COOLDOWN_MS) {
       publishFireAlert(fireValue);
       lastFireAlertSentAt = now;
     }
+  }
+
+  if (fireAlertActive && !fireDetected && fireHighStartedAt > 0 && (now - fireHighStartedAt >= FIRE_CLEAR_CONFIRM_MS)) {
+    Serial.println("[FIRE] Sensor clear is stable. Alarm stays active until guard resets it.");
+    fireHighStartedAt = 0;
   }
 }
 

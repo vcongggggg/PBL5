@@ -249,6 +249,13 @@ class FireAlert(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FireStatus(BaseModel):
+    active: bool
+    unacknowledged_count: int
+    critical_count: int
+    message: str
+
+
 class MonthlyUserBase(BaseModel):
     full_name: str
     phone: Optional[str] = None

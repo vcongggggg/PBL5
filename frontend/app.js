@@ -1,5 +1,6 @@
 const API_BASE = "http://localhost:8000";
 let parkingChart = null;
+let currentFireStatus = { active: false, message: "Hệ thống báo cháy đang bình thường." };
 
 function initParkingChart() {
     const ctx = document.getElementById('parkingFlowChart').getContext('2d');
@@ -555,10 +556,25 @@ async function fetchDashboard() {
 function renderFireAlerts(alerts) {
     const fireList = document.getElementById("fireList");
     const fireCard = document.getElementById("component-fire");
+    const fireStatusText = document.getElementById("fireStatusText");
+    const fireStatusPill = document.getElementById("fireStatusPill");
+    const fireActive = Boolean(currentFireStatus?.active);
+
+    if (fireStatusText) {
+        fireStatusText.textContent = currentFireStatus?.message || "Hệ thống báo cháy đang bình thường.";
+    }
+    if (fireStatusPill) {
+        fireStatusPill.className = fireActive
+            ? "inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-rose-600 text-white text-[10px] font-bold uppercase tracking-wider shadow-sm"
+            : "inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[10px] font-bold uppercase tracking-wider";
+        fireStatusPill.innerHTML = fireActive
+            ? `<span class="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></span> Cổng đang giữ mở`
+            : `<span class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span> Bình thường`;
+    }
     
     if (!alerts || alerts.length === 0) {
-        fireList.innerHTML = `<div class="status-text col-span-2 text-xs text-on-surface-variant/70 italic">Chưa phát hiện sự cố khói hoặc lửa tại các khu vực cảm biến.</div>`;
-        if (fireCard) fireCard.classList.remove("fire-alarm-active");
+        fireList.innerHTML = `<div class="status-text col-span-2 text-xs text-on-surface-variant/70 italic">${fireActive ? "Đang giữ trạng thái báo cháy, cổng vào/ra vẫn mở cho đến khi reset." : "Chưa phát hiện sự cố khói hoặc lửa tại các khu vực cảm biến."}</div>`;
+        if (fireCard) fireCard.classList.toggle("fire-alarm-active", fireActive);
         return;
     }
 
@@ -585,9 +601,13 @@ function renderFireAlerts(alerts) {
 
 async function fetchFireAlerts() {
     try {
-        const res = await fetch(`${API_BASE}/api/fire-alerts?unacked_only=true&limit=10`);
-        if (!res.ok) throw new Error("fire fetch failed");
-        const alerts = await res.json();
+        const [statusRes, alertsRes] = await Promise.all([
+            fetch(`${API_BASE}/api/fire/status`),
+            fetch(`${API_BASE}/api/fire-alerts?unacked_only=true&limit=10`),
+        ]);
+        if (!statusRes.ok || !alertsRes.ok) throw new Error("fire fetch failed");
+        currentFireStatus = await statusRes.json();
+        const alerts = await alertsRes.json();
         renderFireAlerts(alerts);
     } catch (err) {
         console.error(err);
