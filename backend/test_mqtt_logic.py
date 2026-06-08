@@ -144,6 +144,32 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         pending_after = self.db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
         self.assertIsNotNone(pending_after)
 
+    async def test_02b_rfid_early_swipe_processed_after_lpr_completes(self):
+        device_id = "esp32-barrier-01"
+        card = self.add_guest_card("EARLYOK")
+        pending = models.PendingScan(
+            gate_type="entry",
+            plate_number="51F88801",
+            confidence=0.95,
+            device_id=device_id,
+            scan_token="early-ok",
+        )
+        self.db.add(pending)
+        self.db.commit()
+        main_module._pending_rfid_scans["entry"] = ("EARLYOK", device_id, get_vietnam_now())
+        main_module._pending_rfid_scans.pop("entry")
+
+        await main_module.process_mqtt_rfid_validation(self.db, pending, "EARLYOK", "entry", device_id, "in")
+
+        main_module.mqtt_manager.publish_open_gate.assert_called_with(device_id, "in")
+        self.assertNotIn("entry", main_module._pending_rfid_scans)
+        self.assertEqual(self.db.query(models.PendingScan).count(), 0)
+        session = self.db.query(models.ParkingSession).filter(models.ParkingSession.rfid_tag == "EARLYOK").first()
+        self.assertIsNotNone(session)
+        self.assertEqual(session.plate_number, "51F88801")
+        self.db.refresh(card)
+        self.assertEqual(card.status, "in_use")
+
     async def test_03_mqtt_fire_alert_logging(self):
         """
         Kiểm tra khi nhận sự kiện báo cháy (fire_alert) qua MQTT,
@@ -1093,6 +1119,170 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(scan.action, "ignore")
         self.assertIn("báo cháy", scan.message.lower())
         self.assertEqual(self.db.query(models.ParkingSession).count(), 0)
+
+    async def test_40_monthly_exit_integration_fee_zero_and_type_recorded(self):
+        _, _, _, card = self.add_monthly_bundle(uid="MEXITOK", plate="51F90901")
+        entry = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="entry", trigger_type="rfid",
+            source_id="test", rfid_tag="MEXITOK", override_plate="51F90901", override_confidence=0.95,
+        )
+        self.assertEqual(entry.action, "open")
+        session = self.db.query(models.ParkingSession).filter(models.ParkingSession.id == entry.session_id).first()
+        self.assertEqual(session.rfid_card_type, "monthly")
+
+        exit_ = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="exit", trigger_type="rfid",
+            source_id="test", rfid_tag="MEXITOK", override_plate="51F90901", override_confidence=0.95,
+        )
+        self.assertEqual(exit_.action, "open")
+        self.assertEqual(exit_.fee, 0)
+        self.db.refresh(session)
+        self.db.refresh(card)
+        self.assertEqual(session.match_status, "matched")
+        self.assertEqual(card.status, "available")
+
+    async def test_41_monthly_expired_after_entry_can_exit_as_guest_fee(self):
+        _, _, sub, card = self.add_monthly_bundle(uid="MEXITAFT", plate="51F90902")
+        entry = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="entry", trigger_type="rfid",
+            source_id="test", rfid_tag="MEXITAFT", override_plate="51F90902", override_confidence=0.95,
+        )
+        self.assertEqual(entry.action, "open")
+        session = self.db.query(models.ParkingSession).filter(models.ParkingSession.id == entry.session_id).first()
+        session.time_in = get_vietnam_now() - timedelta(minutes=61)
+        sub.end_date = main_module.get_vietnam_date() - timedelta(days=1)
+        self.db.commit()
+
+        exit_ = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="exit", trigger_type="rfid",
+            source_id="test", rfid_tag="MEXITAFT", override_plate="51F90902", override_confidence=0.95,
+        )
+        self.assertEqual(exit_.action, "open")
+        self.assertGreater(exit_.fee or 0, 0)
+        self.db.refresh(card)
+        self.assertEqual(card.status, "available")
+
+    def test_42_plate_normalization_lowercase_spaces_and_symbols(self):
+        self.assertEqual(main_module.ai_service.normalize_plate(" 51f-123 45 "), "51F12345")
+
+    async def test_43_exit_fuzzy_boundary_camera_vs_rfid(self):
+        card_sensor = self.add_guest_card("FUZZS", status="in_use")
+        self.add_open_session("51F12345", "FUZZS", card_sensor)
+        sensor_exit = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="exit", trigger_type="sensor",
+            source_id="test", rfid_tag=None, override_plate="51F12367", override_confidence=0.95,
+        )
+        self.assertEqual(sensor_exit.action, "ignore")
+
+        card_rfid = self.add_guest_card("FUZZR", status="in_use")
+        self.add_open_session("51F22345", "FUZZR", card_rfid)
+        rfid_exit = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="exit", trigger_type="rfid",
+            source_id="test", rfid_tag="FUZZR", override_plate="51F22367", override_confidence=0.95,
+        )
+        self.assertEqual(rfid_exit.action, "open")
+        self.assertEqual(rfid_exit.matched, True)
+
+    async def test_44_force_checkout_open_gate_true_publishes_mqtt_and_fee(self):
+        card = self.add_guest_card("FORCEOPEN", status="in_use")
+        session = self.add_open_session("51F91919", "FORCEOPEN", card)
+        session.time_in = get_vietnam_now() - timedelta(minutes=61)
+        self.db.commit()
+
+        response = await main_module.force_checkout(
+            plate_number="51F91919", reason="lost_card", open_gate=True, db=self.db, api_key="pbl5_secure_key_12345"
+        )
+        self.assertEqual(response["status"], "ok")
+        main_module.mqtt_manager.publish_open_gate.assert_called_with("esp32-barrier-01", "out")
+        self.db.refresh(session)
+        self.assertEqual(session.match_status, "manual")
+        self.assertGreater(session.fee or 0, 0)
+
+    async def test_45_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
+        for key in ["max_parking_slots", "max_guest_slots"]:
+            cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
+            cfg.value = "0"
+        threshold = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == "plate_confidence_threshold").first()
+        threshold.value = "0"
+        self.db.commit()
+
+        card = self.add_guest_card("ZEROCAP")
+        blocked = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="entry", trigger_type="rfid",
+            source_id="test", rfid_tag="ZEROCAP", override_plate="51F92929", override_confidence=0.95,
+        )
+        self.assertEqual(blocked.action, "ignore")
+
+        unknown_card = self.add_guest_card("UNKTHR")
+        unknown = await process_gate_scan(
+            db=self.db, image_bytes=None, filename=None, gate_type="entry", trigger_type="rfid",
+            source_id="test", rfid_tag="UNKTHR", override_plate="UNKNOWN", override_confidence=0.0,
+        )
+        self.assertEqual(unknown.action, "ignore")
+
+    async def test_46_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
+        main_module.ESP_EVENT_COOLDOWN_SECONDS = 1
+        created_tasks = []
+
+        def capture_task(coro):
+            created_tasks.append(coro)
+            coro.close()
+            return MagicMock()
+
+        try:
+            with patch("app.main.asyncio.create_task", side_effect=capture_task), patch("app.main.time_module.time", side_effect=[100.0, 100.2, 101.2]):
+                await handle_mqtt_event("esp32", "car_detected", {})
+                await handle_mqtt_event("esp32", "car_detected", {})
+                await handle_mqtt_event("esp32", "car_detected", {})
+            self.assertEqual(len(created_tasks), 2)
+            self.assertEqual(self.db.query(models.PendingScan).count(), 1)
+        finally:
+            main_module.ESP_EVENT_COOLDOWN_SECONDS = 0
+            main_module._esp_event_cooldown.clear()
+
+        await handle_mqtt_event("fire-empty", "fire_alert", {"sensor_value": 0})
+        alert = self.db.query(models.FireAlert).filter(models.FireAlert.sensor_id == "fire-empty").first()
+        self.assertIsNotNone(alert)
+        self.assertTrue(alert.message)
+
+    def test_47_dashboard_yesterday_entry_today_exit_and_type_counts(self):
+        now = get_vietnam_now()
+        self.db.add(models.ParkingSession(
+            plate_number="51F93931",
+            time_in=now - timedelta(days=1, hours=1),
+            time_out=now - timedelta(minutes=5),
+            fee=5000,
+            match_status="matched",
+            rfid_card_type="guest",
+        ))
+        guest_card = self.add_guest_card("COUNTG", status="in_use")
+        guest_open = self.add_open_session("51F93932", "COUNTG", guest_card)
+        guest_open.time_in = now - timedelta(days=1, hours=2)
+        _, _, _, monthly_card = self.add_monthly_bundle(uid="COUNTM", plate="51F93933")
+        monthly_card.status = "in_use"
+        monthly_open = self.add_open_session("51F93933", "COUNTM", monthly_card)
+        monthly_open.time_in = now - timedelta(days=1, hours=1)
+        monthly_open.rfid_card_type = "monthly"
+        self.db.commit()
+
+        stats = main_module.get_dashboard_stats(db=self.db)
+        self.assertEqual(stats.today_total_in, 0)
+        self.assertEqual(stats.today_total_out, 1)
+        self.assertEqual(stats.guest_in_bay, 1)
+        self.assertEqual(stats.monthly_in_bay, 1)
+
+    def test_48_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
+        self.db.add(models.FireAlert(sensor_id="fire-warn", level="warning", message="Smoke"))
+        self.db.add(models.FireAlert(sensor_id="fire-critical", level="critical", message="Fire"))
+        self.db.commit()
+        status = main_module.get_fire_status(db=self.db)
+        self.assertTrue(status.active)
+        self.assertEqual(status.critical_count, 1)
+        self.assertEqual(status.warning_count, 1)
+
+        with self.assertRaises(main_module.HTTPException) as ctx:
+            main_module.verify_api_key(api_key="wrong", db=self.db)
+        self.assertEqual(ctx.exception.status_code, 401)
 
 if __name__ == "__main__":
     unittest.main()

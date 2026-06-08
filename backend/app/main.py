@@ -364,7 +364,17 @@ def create_manual_gate_log(
 
 
 def build_capacity_status(total_in_bay: int, max_slots: int, near_full_threshold: float = 0.7, almost_full_threshold: float = 0.9) -> dict:
-    safe_max_slots = max(1, int(max_slots or 1))
+    safe_max_slots = max(0, int(max_slots or 0))
+    if safe_max_slots == 0:
+        return {
+            "max_slots": 0,
+            "available_slots": 0,
+            "occupancy_percent": 100.0,
+            "capacity_status": "full",
+            "capacity_message": "Bai xe da day (0/0). Tam dung nhan xe vao.",
+            "near_full_threshold": near_full_threshold,
+            "almost_full_threshold": almost_full_threshold,
+        }
     available_slots = max(0, safe_max_slots - total_in_bay)
     occupancy_percent = min(100.0, max(0.0, (total_in_bay / safe_max_slots) * 100.0))
 
@@ -460,7 +470,7 @@ def calculate_fee(now: datetime, session: models.ParkingSession, db: Session, ti
 
 
 def resolve_session_ticket_type(db: Session, session: models.ParkingSession) -> str:
-    if session.rfid_card_type in ["monthly", "guest"]:
+    if session.rfid_card_type == "guest":
         return session.rfid_card_type
 
     vehicle_id = session.vehicle_id
@@ -475,13 +485,14 @@ def resolve_session_ticket_type(db: Session, session: models.ParkingSession) -> 
     if not vehicle_id:
         return "guest"
 
-    parked_date = session.time_in.date()
+    check_date = get_vietnam_date()
     has_monthly = (
         db.query(models.Subscription)
         .filter(
             models.Subscription.vehicle_id == vehicle_id,
-            models.Subscription.start_date <= parked_date,
-            models.Subscription.end_date >= parked_date,
+            models.Subscription.is_active == True,  # noqa: E712
+            models.Subscription.start_date <= check_date,
+            models.Subscription.end_date >= check_date,
         )
         .first()
     )
@@ -556,6 +567,22 @@ def validate_rfid_for_scan(
             .first()
         )
         if not active_sub:
+            if gate_type == "exit":
+                registered_plate = ai_service.normalize_plate(registered_vehicle.plate_number)
+                open_session = (
+                    db.query(models.ParkingSession)
+                    .filter(
+                        models.ParkingSession.time_out.is_(None),
+                        (
+                            (models.ParkingSession.rfid_card_id == card.id)
+                            | (models.ParkingSession.rfid_tag == card.card_uid)
+                            | (models.ParkingSession.plate_number == registered_plate)
+                        ),
+                    )
+                    .first()
+                )
+                if open_session:
+                    return card, None
             return None, "Dang ky ve thang da het han hoac khong hoat dong"
         if card.monthly_user_id and active_sub.monthly_user_id and card.monthly_user_id != active_sub.monthly_user_id:
             return None, "The RFID khong khop chu dang ky ve thang"
@@ -2619,7 +2646,10 @@ async def force_checkout(
     gate_opened = False
     if open_gate:
         global esp32_ip
-        if esp32_ip:
+        if mqtt_manager.is_connected:
+            mqtt_manager.publish_open_gate("esp32-barrier-01", "out")
+            gate_opened = True
+        elif esp32_ip:
             import urllib.request
             import urllib.error
             from fastapi.concurrency import run_in_threadpool
@@ -2927,6 +2957,14 @@ def get_fire_status(db: Session = Depends(get_db)):
         )
         .count()
     )
+    warning_count = (
+        db.query(models.FireAlert)
+        .filter(
+            models.FireAlert.is_acknowledged == False,  # noqa: E712
+            models.FireAlert.level == "warning",
+        )
+        .count()
+    )
     active = is_fire_alarm_blocking(db)
     message = (
         "ĐANG BÁO CHÁY - Cổng vào/ra đang được giữ mở cho đến khi bảo vệ reset."
@@ -2937,6 +2975,7 @@ def get_fire_status(db: Session = Depends(get_db)):
         active=active,
         unacknowledged_count=unacknowledged_count,
         critical_count=critical_count,
+        warning_count=warning_count,
         message=message,
     )
 

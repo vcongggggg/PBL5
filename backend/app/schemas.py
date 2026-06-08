@@ -253,6 +253,7 @@ class FireStatus(BaseModel):
     active: bool
     unacknowledged_count: int
     critical_count: int
+    warning_count: int = 0
     message: str
 
 
