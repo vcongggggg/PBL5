@@ -78,6 +78,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             "rfid_uid_whitelist": "GUEST001,GUEST002,E9B8A7C6",
             "monthly_card_fee": "50000",
             "guest_card_fee_per_hour": "5000",
+            "lost_rfid_compensation_fee": "50000",
             "manual_gate_open_seconds": "5",
             "allow_rfid_only_exit": "1",
             "parking_near_full_threshold": "0.7",
@@ -1200,15 +1201,48 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.db.commit()
 
         response = await main_module.force_checkout(
-            plate_number="51F91919", reason="lost_card", open_gate=True, db=self.db, api_key="pbl5_secure_key_12345"
+            plate_number="51F91919", reason="lost_card", open_gate=True, operator="guard-lost-card", db=self.db, api_key="pbl5_secure_key_12345"
         )
         self.assertEqual(response["status"], "ok")
         main_module.mqtt_manager.publish_open_gate.assert_called_with("esp32-barrier-01", "out")
         self.db.refresh(session)
         self.assertEqual(session.match_status, "manual")
         self.assertGreater(session.fee or 0, 0)
+        self.assertEqual(response["compensation_fee"], 50000.0)
+        self.assertEqual(session.fee, response["parking_fee"] + response["compensation_fee"])
 
-    async def test_45_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
+        log = self.db.query(models.ManualGateLog).order_by(models.ManualGateLog.id.desc()).first()
+        self.assertEqual(log.action, "force_checkout")
+        self.assertEqual(log.reason, "lost_card")
+        self.assertEqual(log.operator, "guard-lost-card")
+
+    async def test_45_manual_open_records_operator_reason_and_sanitizes_unknown_reason(self):
+        result = await force_open_gate(
+            gate_type="exit",
+            reason="verified_plate",
+            operator="guard-a",
+            db=self.db,
+            api_key="pbl5_secure_key_12345",
+        )
+        self.assertEqual(result["reason"], "verified_plate")
+        log = self.db.query(models.ManualGateLog).order_by(models.ManualGateLog.id.desc()).first()
+        self.assertEqual(log.action, "open_manual")
+        self.assertEqual(log.reason, "verified_plate")
+        self.assertEqual(log.operator, "guard-a")
+
+        main_module._manual_gate_open_until["entry"] = 0.0
+        unknown = await force_open_gate(
+            gate_type="entry",
+            reason="some-random-reason",
+            operator="guard-b",
+            db=self.db,
+            api_key="pbl5_secure_key_12345",
+        )
+        self.assertEqual(unknown["reason"], "manual_override")
+        log = self.db.query(models.ManualGateLog).order_by(models.ManualGateLog.id.desc()).first()
+        self.assertEqual(log.reason, "manual_override")
+
+    async def test_46_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
         for key in ["max_parking_slots", "max_guest_slots"]:
             cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
             cfg.value = "0"
@@ -1230,7 +1264,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(unknown.action, "ignore")
 
-    async def test_46_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
+    async def test_47_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
         main_module.ESP_EVENT_COOLDOWN_SECONDS = 1
         created_tasks = []
 
@@ -1255,7 +1289,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(alert)
         self.assertTrue(alert.message)
 
-    def test_47_dashboard_yesterday_entry_today_exit_and_type_counts(self):
+    def test_48_dashboard_yesterday_entry_today_exit_and_type_counts(self):
         now = get_vietnam_now()
         self.db.add(models.ParkingSession(
             plate_number="51F93931",
@@ -1281,7 +1315,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.guest_in_bay, 1)
         self.assertEqual(stats.monthly_in_bay, 1)
 
-    def test_48_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
+    def test_49_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
         self.db.add(models.FireAlert(sensor_id="fire-warn", level="warning", message="Smoke"))
         self.db.add(models.FireAlert(sensor_id="fire-critical", level="critical", message="Fire"))
         self.db.commit()

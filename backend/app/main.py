@@ -469,6 +469,23 @@ def calculate_fee(now: datetime, session: models.ParkingSession, db: Session, ti
     return duration_minutes, fee
 
 
+def normalize_manual_reason(reason: str) -> str:
+    allowed_reasons = {
+        "verified_plate",
+        "lost_card",
+        "system_error",
+        "manual_override",
+        "emergency",
+        "maintenance",
+    }
+    reason_norm = (reason or "manual_override").strip().lower()
+    return reason_norm if reason_norm in allowed_reasons else "manual_override"
+
+
+def get_lost_rfid_compensation_fee(db: Session) -> float:
+    return max(0.0, get_system_config_value(db, "lost_rfid_compensation_fee", 50000.0))
+
+
 def resolve_session_ticket_type(db: Session, session: models.ParkingSession) -> str:
     if session.rfid_card_type == "guest":
         return session.rfid_card_type
@@ -1799,6 +1816,7 @@ async def force_open_gate(
     gate_type = (gate_type or "").lower()
     if gate_type not in ["entry", "exit"]:
         raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
+    reason = normalize_manual_reason(reason)
 
     gate = "in" if gate_type == "entry" else "out"
     manual_gate_open_seconds = get_system_config_value(db, "manual_gate_open_seconds", MANUAL_GATE_OPEN_SECONDS)
@@ -1827,9 +1845,10 @@ async def force_open_gate(
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
+            "reason": reason,
             "message": message,
         })
-        return {"status": "ok", "message": message}
+        return {"status": "ok", "message": message, "reason": reason}
 
     global esp32_ip
     if not esp32_ip:
@@ -1863,9 +1882,10 @@ async def force_open_gate(
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
+            "reason": reason,
             "message": message,
         })
-        return {"status": "ok", "message": message}
+        return {"status": "ok", "message": message, "reason": reason}
 
     raise HTTPException(
         status_code=502,
@@ -2600,6 +2620,7 @@ async def force_checkout(
     plate_number: str = Form(...),
     reason: str = Form("lost_card"),
     open_gate: bool = Form(True),
+    operator: str = Form("operator"),
     db: Session = Depends(get_db),
     api_key: str = Depends(verify_api_key)
 ):
@@ -2607,6 +2628,8 @@ async def force_checkout(
     Bảo vệ tìm xe theo biển số, tính phí thủ công, kết thúc session.
     Tùy chọn mở cổng ra cho xe.
     """
+    reason = normalize_manual_reason(reason)
+    operator = operator if isinstance(operator, str) else "operator"
     plate_norm = ai_service.normalize_plate(plate_number)
     now = get_vietnam_now()
 
@@ -2626,7 +2649,9 @@ async def force_checkout(
         )
 
     ticket_type = resolve_session_ticket_type(db, session)
-    duration_minutes, fee = calculate_fee(now, session, db, ticket_type=ticket_type)
+    duration_minutes, parking_fee = calculate_fee(now, session, db, ticket_type=ticket_type)
+    compensation_fee = get_lost_rfid_compensation_fee(db) if reason == "lost_card" else 0.0
+    fee = parking_fee + compensation_fee
 
     session.time_out = now
     session.fee = fee
@@ -2638,6 +2663,15 @@ async def force_checkout(
         rfid_card_to_release = get_rfid_card(db, session.rfid_tag)
         if rfid_card_to_release:
             rfid_card_to_release.status = "available"
+
+    create_manual_gate_log(
+        db,
+        "exit",
+        "force_checkout",
+        reason=reason,
+        operator=operator,
+        source="web",
+    )
 
     db.commit()
     db.refresh(session)
@@ -2671,6 +2705,8 @@ async def force_checkout(
         "gate_type": "exit",
         "plate": plate_norm,
         "fee": fee,
+        "parking_fee": parking_fee,
+        "compensation_fee": compensation_fee,
         "reason": reason,
         "session_id": session.id,
     })
@@ -2682,6 +2718,8 @@ async def force_checkout(
         "plate_number": plate_norm,
         "duration_minutes": duration_minutes,
         "fee": fee,
+        "parking_fee": parking_fee,
+        "compensation_fee": compensation_fee,
         "fee_display": fee_fmt,
         "gate_opened": gate_opened,
         "message": f"Đã checkout thủ công xe {plate_norm}. Phí: {fee_fmt}. Thời gian gửi: {duration_minutes} phút.",

@@ -405,12 +405,37 @@ async function triggerAndScan(gate, triggerType) {
     }
 }
 
+const MANUAL_OPEN_REASONS = {
+    verified_plate: "Da doi chieu bien so bang mat",
+    manual_override: "Bao ve xac nhan thu cong",
+    emergency: "Mo khan cap",
+    maintenance: "Kiem tra/bao tri thiet bi",
+    system_error: "Camera/cam bien/he thong loi"
+};
+
+function askManualOpenReason() {
+    const hint = [
+        "Chon muc dich mo cong:",
+        "verified_plate = cho xe qua sau khi nhin bien so dung",
+        "manual_override = bao ve xac nhan thu cong",
+        "emergency = mo khan cap",
+        "maintenance = kiem tra/bao tri",
+        "system_error = he thong/cam bien loi"
+    ].join("\n");
+    const value = window.prompt(hint, "verified_plate");
+    if (value === null) return null;
+    const reason = value.trim().toLowerCase();
+    return MANUAL_OPEN_REASONS[reason] ? reason : "manual_override";
+}
+
 async function forceOpenGate(gate) {
     try {
+        const reason = askManualOpenReason();
+        if (!reason) return;
         setStatus(gate, "Đang phát lệnh mở cổng khẩn cấp...", "warn");
         const formData = new FormData();
         formData.append("gate_type", gate);
-        formData.append("reason", "manual_override");
+        formData.append("reason", reason);
         formData.append("operator", "admin");
 
         const res = await fetch(`${API_BASE}/api/gates/force-open`, {
@@ -936,6 +961,7 @@ function bindGlobalActions() {
             formData.append("plate_number", plate);
             formData.append("reason", reason);
             formData.append("open_gate", "true");
+            formData.append("operator", "admin");
 
             const res = await fetch(`${API_BASE}/api/parking/force-checkout`, {
                 method: "POST",
@@ -948,7 +974,11 @@ function bindGlobalActions() {
             if (!res.ok) throw new Error(data.detail || "Giải phóng xe kẹt thất bại");
 
             resultEl.className = "mt-3 text-xs font-bold text-success";
-            resultEl.textContent = data.message;
+            const compensationFee = Number(data.compensation_fee || 0);
+            const compensationText = compensationFee > 0
+                ? ` Phi den bu mat RFID: ${compensationFee.toLocaleString("vi-VN")}d.`
+                : "";
+            resultEl.textContent = `${data.message}${compensationText}`;
             document.getElementById("forceCheckoutPlate").value = "";
 
             await fetchDashboard();
