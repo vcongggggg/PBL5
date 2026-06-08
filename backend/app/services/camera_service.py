@@ -280,3 +280,15 @@ camera_manager = CameraManager()
 
 def capture_image(gate_type: str):
     return camera_manager.capture(gate_type)
+
+
+async def gen_frames(gate_type: str):
+    import asyncio
+    while True:
+        frame_bytes = camera_manager.capture(gate_type)
+        if frame_bytes:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        else:
+            await asyncio.sleep(0.1)
+        await asyncio.sleep(0.05)
