@@ -1063,5 +1063,36 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(status_after.active)
         self.assertEqual(status_after.unacknowledged_count, 0)
 
+    async def test_39_fire_active_blocks_normal_parking_flows(self):
+        main_module.set_fire_alarm_active(self.db, True)
+        self.db.commit()
+
+        await handle_mqtt_event("esp32", "car_detected", {"direction": "in"})
+        self.assertEqual(self.db.query(models.PendingScan).count(), 0)
+
+        self.add_guest_card("FIRECARD")
+        await handle_mqtt_event("esp32", "rfid_scan", {"uid": "FIRECARD", "direction": "in"})
+        main_module.mqtt_manager.publish_open_gate.assert_not_called()
+        fire_block_messages = [
+            data for event, data in self.notifications
+            if event == "parking_update" and "báo cháy" in data.get("message", "").lower()
+        ]
+        self.assertGreaterEqual(len(fire_block_messages), 2)
+
+        scan = await process_gate_scan(
+            db=self.db,
+            image_bytes=None,
+            filename=None,
+            gate_type="entry",
+            trigger_type="rfid",
+            source_id="test",
+            rfid_tag="FIRECARD",
+            override_plate="51F80808",
+            override_confidence=0.95,
+        )
+        self.assertEqual(scan.action, "ignore")
+        self.assertIn("báo cháy", scan.message.lower())
+        self.assertEqual(self.db.query(models.ParkingSession).count(), 0)
+
 if __name__ == "__main__":
     unittest.main()

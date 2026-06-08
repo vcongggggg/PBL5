@@ -582,6 +582,18 @@ async def process_gate_scan(
         raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
     if trigger_type not in ["sensor", "rfid", "manual"]:
         raise HTTPException(status_code=400, detail="trigger_type must be sensor, rfid or manual")
+    if trigger_type != "manual" and is_fire_alarm_blocking(db):
+        return schemas.GateScanResponse(
+            action="ignore",
+            gate_type=gate_type,
+            trigger_type=trigger_type,
+            recognized_plate="UNKNOWN",
+            confidence=0.0,
+            valid_plate=False,
+            matched=False,
+            rfid_tag=rfid_tag,
+            message="Đang báo cháy, hệ thống tạm dừng luồng xe thường. Cổng vào/ra đang được giữ mở.",
+        )
 
     if override_plate is not None:
         plate_raw, confidence = override_plate, (override_confidence or 0.9)
@@ -1061,6 +1073,11 @@ def gate_trigger(payload: schemas.GateTriggerRequest, db: Session = Depends(get_
         raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
     if trigger_type not in ["sensor", "rfid"]:
         raise HTTPException(status_code=400, detail="trigger_type must be sensor or rfid")
+    if is_fire_alarm_blocking(db):
+        raise HTTPException(
+            status_code=423,
+            detail="Đang báo cháy, hệ thống tạm dừng nhận xe thường. Cổng vào/ra đang được giữ mở.",
+        )
 
     rfid_card_type = None
     if trigger_type == "rfid":
@@ -1123,6 +1140,11 @@ async def gate_sensor_event(payload: schemas.GateTriggerRequest, db: Session = D
     gate_type = payload.gate_type.lower()
     if gate_type not in ["entry", "exit"]:
         raise HTTPException(status_code=400, detail="gate_type must be entry or exit")
+    if is_fire_alarm_blocking(db):
+        raise HTTPException(
+            status_code=423,
+            detail="Đang báo cháy, hệ thống tạm dừng cảm biến xe. Cổng vào/ra đang được giữ mở.",
+        )
 
     direction = "in" if gate_type == "entry" else "out"
     scan_token = uuid.uuid4().hex
@@ -1261,6 +1283,17 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
     """
     db = SessionLocal()
     try:
+        if event_type in ["car_detected", "rfid_scan"] and is_fire_alarm_blocking(db):
+            await notify_clients("parking_update", {
+                "action": "ignore",
+                "gate_type": "fire",
+                "plate": "UNKNOWN",
+                "confidence": 0.0,
+                "matched": False,
+                "message": "Đang báo cháy, bỏ qua luồng xe/thẻ. Cổng vào/ra đang được giữ mở.",
+            })
+            return
+
         if event_type == "car_detected":
             direction = payload.get("direction", "in")
             gate_type = "entry" if direction == "in" else "exit"
@@ -2803,6 +2836,18 @@ def get_fire_alarm_active(db: Session) -> bool:
     return get_config_bool(db, "fire_alarm_active", False)
 
 
+def is_fire_alarm_blocking(db: Session) -> bool:
+    critical_count = (
+        db.query(models.FireAlert)
+        .filter(
+            models.FireAlert.is_acknowledged == False,  # noqa: E712
+            models.FireAlert.level == "critical",
+        )
+        .count()
+    )
+    return get_fire_alarm_active(db) or critical_count > 0
+
+
 def resolve_open_fire_alerts(db: Session) -> int:
     count = (
         db.query(models.FireAlert)
@@ -2882,7 +2927,7 @@ def get_fire_status(db: Session = Depends(get_db)):
         )
         .count()
     )
-    active = get_fire_alarm_active(db) or critical_count > 0
+    active = is_fire_alarm_blocking(db)
     message = (
         "ĐANG BÁO CHÁY - Cổng vào/ra đang được giữ mở cho đến khi bảo vệ reset."
         if active
