@@ -300,6 +300,60 @@ html:not(.dark) .pf-control-stop {
     background: linear-gradient(180deg, #243244, #16202c);
 }
 
+.pf-force-checkout-btn,
+.pf-emergency-reset-btn {
+    border: 1px solid rgba(146, 64, 14, 0.48) !important;
+    background: linear-gradient(135deg, #d97706, #b45309) !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 10px 24px rgba(180, 83, 9, 0.24),
+        inset 0 1px 0 rgba(255, 255, 255, 0.24) !important;
+}
+
+.pf-force-checkout-btn:hover,
+.pf-emergency-reset-btn:hover {
+    background: linear-gradient(135deg, #b45309, #92400e) !important;
+}
+
+.pf-force-checkout-btn:focus-visible,
+.pf-emergency-reset-btn:focus-visible {
+    outline: none;
+    box-shadow:
+        0 0 0 3px rgba(217, 119, 6, 0.28),
+        0 10px 24px rgba(180, 83, 9, 0.24) !important;
+}
+
+.pf-force-checkout-btn:disabled,
+.pf-emergency-reset-btn:disabled {
+    border-color: rgba(100, 116, 139, 0.5) !important;
+    background: linear-gradient(135deg, #cbd5e1, #94a3b8) !important;
+    color: #1f2937 !important;
+    cursor: not-allowed;
+    opacity: 1 !important;
+    box-shadow:
+        0 8px 18px rgba(100, 116, 139, 0.16),
+        inset 0 1px 0 rgba(255, 255, 255, 0.32) !important;
+    transform: none !important;
+}
+
+html:not(.dark) .pf-force-checkout-btn,
+html:not(.dark) .pf-emergency-reset-btn {
+    box-shadow:
+        0 10px 26px rgba(146, 64, 14, 0.28),
+        0 0 0 1px rgba(146, 64, 14, 0.1),
+        inset 0 1px 0 rgba(255, 255, 255, 0.26) !important;
+}
+
+html:not(.dark) .pf-force-checkout-btn:disabled,
+html:not(.dark) .pf-emergency-reset-btn:disabled {
+    border-color: rgba(71, 85, 105, 0.34) !important;
+    background: linear-gradient(135deg, #e2e8f0, #cbd5e1) !important;
+    color: #334155 !important;
+    box-shadow:
+        0 8px 20px rgba(71, 85, 105, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.6) !important;
+}
+
 /* Custom Scrollbar */
 ::-webkit-scrollbar {
     width: 6px;
