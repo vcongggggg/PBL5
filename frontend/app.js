@@ -156,10 +156,14 @@ function formatVietnamesePlate(plateStr) {
     let line1 = "";
     let line2 = "";
     
-    const match = plateStr.match(/^([0-9]{2}[A-Z]{1,2}[0-9]?)[- ]?([0-9]{3,5})$/i);
+    const match = cleanPlate.match(/^([0-9]{2}[A-Z]{1,2})([0-9]{3,6})$/);
     if (match) {
-        line1 = match[1].toUpperCase();
+        line1 = match[1];
         let rawNum = match[2];
+        if (rawNum.length === 6) {
+            line1 += rawNum.slice(0, 1);
+            rawNum = rawNum.slice(1);
+        }
         if (rawNum.length === 5) {
             line2 = rawNum.slice(0, 3) + "." + rawNum.slice(3);
         } else {

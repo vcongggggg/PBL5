@@ -295,7 +295,7 @@ def image_url_from_path(image_path: Optional[str]) -> Optional[str]:
     return f"/uploads/{filename}"
 
 
-def crop_image_bytes_by_bbox(image_bytes: Optional[bytes], bbox: Optional[List[int]], padding_ratio: float = 0.18) -> Optional[bytes]:
+def crop_image_bytes_by_bbox(image_bytes: Optional[bytes], bbox: Optional[List[int]], padding_ratio: float = 0.04) -> Optional[bytes]:
     if not image_bytes or not bbox:
         return None
     try:
