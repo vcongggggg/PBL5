@@ -3,6 +3,10 @@ let parkingChart = null;
 let currentFireStatus = { active: false, message: "Hệ thống báo cháy đang bình thường." };
 let currentFireAlerts = [];
 let fireOverlayDismissedForActive = false;
+const latestGateResults = {
+    entry: {},
+    exit: {},
+};
 
 function initParkingChart() {
     const ctx = document.getElementById('parkingFlowChart').getContext('2d');
@@ -262,6 +266,9 @@ function setStatus(gate, message, tone = "") {
 function renderGateResult(gate, data = {}) {
     const cfg = gateState[gate];
     if (!cfg || !cfg.result) return;
+    if (data && Object.keys(data).length > 0) {
+        latestGateResults[gate] = { ...(data || {}) };
+    }
     
     const feeFmt = data.fee != null ? Number(data.fee).toLocaleString("vi-VN") + "đ" : "-";
     const confFmt = data.confidence != null ? Number(data.confidence).toFixed(3) : "-";
@@ -406,7 +413,9 @@ async function triggerAndScan(gate, triggerType) {
 }
 
 const MANUAL_OPEN_REASONS = {
+    open_only: "Chi mo cong, khong xu ly session",
     verified_plate: "Da doi chieu bien so bang mat",
+    lost_card: "Mat RFID, giai phong xe va thu phi den bu",
     manual_override: "Bao ve xac nhan thu cong",
     emergency: "Mo khan cap",
     maintenance: "Kiem tra/bao tri thiet bi",
@@ -416,22 +425,95 @@ const MANUAL_OPEN_REASONS = {
 function askManualOpenReason() {
     const hint = [
         "Chon muc dich mo cong:",
-        "verified_plate = cho xe qua sau khi nhin bien so dung",
-        "manual_override = bao ve xac nhan thu cong",
+        "open_only = chi mo cong, khong dong session",
+        "verified_plate = bien so dung, giai phong xe va mo cong",
+        "lost_card = mat RFID, tinh phi den bu va mo cong",
+        "system_error = loi camera/cam bien, giai phong xe va mo cong",
         "emergency = mo khan cap",
         "maintenance = kiem tra/bao tri",
-        "system_error = he thong/cam bien loi"
+        "manual_override = bao ve xac nhan thu cong"
     ].join("\n");
-    const value = window.prompt(hint, "verified_plate");
+    const value = window.prompt(hint, "open_only");
     if (value === null) return null;
     const reason = value.trim().toLowerCase();
     return MANUAL_OPEN_REASONS[reason] ? reason : "manual_override";
+}
+
+function getGatePlateCandidate(gate) {
+    const data = latestGateResults[gate] || {};
+    const candidates = [
+        data.plate_out,
+        data.recognized_plate,
+        data.plate_in,
+        data.plate,
+    ];
+    return (candidates.find((value) => value && value !== "UNKNOWN" && value !== "PROCESSING" && value !== "...") || "").trim();
+}
+
+async function forceCheckoutFromMonitoring(gate, reason) {
+    if (gate !== "exit") {
+        alert("Giai phong xe chi ap dung cho lan ra. Lan vao chi nen dung 'open_only' hoac 'emergency'.");
+        return false;
+    }
+
+    let plate = getGatePlateCandidate(gate);
+    if (!plate) {
+        plate = (window.prompt("Nhap bien so xe can giai phong:", "") || "").trim();
+    }
+    if (!plate) return false;
+
+    const confirmText = reason === "lost_card"
+        ? `Xac nhan giai phong xe ${plate}, tinh phi gui xe + phi den bu mat RFID va mo cong ra?`
+        : `Xac nhan dong session xe ${plate} va mo cong ra?`;
+    if (!window.confirm(confirmText)) return false;
+
+    setStatus(gate, "Dang giai phong xe va tinh phi...", "warn");
+    const formData = new FormData();
+    formData.append("plate_number", plate);
+    formData.append("reason", reason);
+    formData.append("open_gate", "true");
+    formData.append("operator", "admin");
+
+    const res = await fetch(`${API_BASE}/api/parking/force-checkout`, {
+        method: "POST",
+        headers: {
+            "X-API-Key": "pbl5_secure_key_12345"
+        },
+        body: formData,
+    });
+    const data = await res.json();
+    if (!res.ok) {
+        throw new Error(data.detail || "Giai phong xe that bai");
+    }
+
+    const compensationFee = Number(data.compensation_fee || 0);
+    const compensationText = compensationFee > 0
+        ? ` Phi den bu RFID: ${compensationFee.toLocaleString("vi-VN")}d.`
+        : "";
+    setStatus(gate, `${data.message || "Da giai phong xe."}${compensationText}`, "ok");
+    renderGateResult(gate, {
+        action: "force_checkout",
+        recognized_plate: data.plate_number,
+        plate_out: data.plate_number,
+        confidence: null,
+        matched: true,
+        duration_minutes: data.duration_minutes,
+        fee: data.fee,
+        message: `${data.message || "Da giai phong xe."}${compensationText}`,
+    });
+    await fetchDashboard();
+    await fetchParkingHistory();
+    return true;
 }
 
 async function forceOpenGate(gate) {
     try {
         const reason = askManualOpenReason();
         if (!reason) return;
+        if (["verified_plate", "lost_card", "system_error", "manual_override"].includes(reason) && gate === "exit") {
+            const handled = await forceCheckoutFromMonitoring(gate, reason);
+            if (handled) return;
+        }
         setStatus(gate, "Đang phát lệnh mở cổng khẩn cấp...", "warn");
         const formData = new FormData();
         formData.append("gate_type", gate);
