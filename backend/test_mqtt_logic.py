@@ -1242,7 +1242,30 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         log = self.db.query(models.ManualGateLog).order_by(models.ManualGateLog.id.desc()).first()
         self.assertEqual(log.reason, "manual_override")
 
-    async def test_46_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
+    async def test_46_force_checkout_prefers_rfid_when_plate_is_wrong(self):
+        card = self.add_guest_card("RFIDFIRST", status="in_use")
+        session = self.add_open_session("43A1985", "RFIDFIRST", card)
+        wrong_card = self.add_guest_card("WRONGPLATE", status="in_use")
+        wrong_session = self.add_open_session("43A78519", "WRONGPLATE", wrong_card)
+
+        response = await main_module.force_checkout(
+            plate_number="43A78519",
+            rfid_tag="RFIDFIRST",
+            reason="verified_plate",
+            open_gate=False,
+            operator="guard-rfid",
+            db=self.db,
+            api_key="pbl5_secure_key_12345",
+        )
+
+        self.assertEqual(response["plate_number"], "43A1985")
+        self.db.refresh(session)
+        self.db.refresh(wrong_session)
+        self.assertIsNotNone(session.time_out)
+        self.assertIsNone(wrong_session.time_out)
+        self.assertEqual(session.match_status, "manual")
+
+    async def test_47_config_zero_capacity_blocks_entry_and_threshold_zero_still_rejects_unknown(self):
         for key in ["max_parking_slots", "max_guest_slots"]:
             cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == key).first()
             cfg.value = "0"
@@ -1264,7 +1287,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(unknown.action, "ignore")
 
-    async def test_47_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
+    async def test_48_mqtt_malformed_payloads_and_cooldown_unblocks_after_window(self):
         main_module.ESP_EVENT_COOLDOWN_SECONDS = 1
         created_tasks = []
 
@@ -1289,7 +1312,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(alert)
         self.assertTrue(alert.message)
 
-    def test_48_dashboard_yesterday_entry_today_exit_and_type_counts(self):
+    def test_49_dashboard_yesterday_entry_today_exit_and_type_counts(self):
         now = get_vietnam_now()
         self.db.add(models.ParkingSession(
             plate_number="51F93931",
@@ -1315,7 +1338,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(stats.guest_in_bay, 1)
         self.assertEqual(stats.monthly_in_bay, 1)
 
-    def test_49_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
+    def test_50_fire_status_counts_warning_and_critical_and_wrong_key_rejected(self):
         self.db.add(models.FireAlert(sensor_id="fire-warn", level="warning", message="Smoke"))
         self.db.add(models.FireAlert(sensor_id="fire-critical", level="critical", message="Fire"))
         self.db.commit()

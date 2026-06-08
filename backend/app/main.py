@@ -2618,7 +2618,8 @@ def parking_check_out(payload: schemas.ParkingCheckoutRequest, db: Session = Dep
 # ============ FORCE CHECKOUT (Mất thẻ / Xe kẹt) ============
 @app.post("/api/parking/force-checkout")
 async def force_checkout(
-    plate_number: str = Form(...),
+    plate_number: Optional[str] = Form(None),
+    rfid_tag: Optional[str] = Form(None),
     reason: str = Form("lost_card"),
     open_gate: bool = Form(True),
     operator: str = Form("operator"),
@@ -2631,18 +2632,31 @@ async def force_checkout(
     """
     reason = normalize_manual_reason(reason)
     operator = operator if isinstance(operator, str) else "operator"
-    plate_norm = ai_service.normalize_plate(plate_number)
+    plate_norm = ai_service.normalize_plate(plate_number or "")
+    rfid_norm = (rfid_tag if isinstance(rfid_tag, str) else "").strip().upper().replace(" ", "").replace(":", "")
     now = get_vietnam_now()
 
-    session = (
-        db.query(models.ParkingSession)
-        .filter(
-            models.ParkingSession.plate_number == plate_norm,
-            models.ParkingSession.time_out.is_(None),
+    session = None
+    if rfid_norm:
+        session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.rfid_tag == rfid_norm,
+                models.ParkingSession.time_out.is_(None),
+            )
+            .order_by(models.ParkingSession.time_in.desc())
+            .first()
         )
-        .order_by(models.ParkingSession.time_in.desc())
-        .first()
-    )
+    if not session and plate_norm:
+        session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.plate_number == plate_norm,
+                models.ParkingSession.time_out.is_(None),
+            )
+            .order_by(models.ParkingSession.time_in.desc())
+            .first()
+        )
     if not session:
         raise HTTPException(
             status_code=404,
@@ -2656,7 +2670,7 @@ async def force_checkout(
 
     session.time_out = now
     session.fee = fee
-    session.plate_out = plate_norm
+    session.plate_out = plate_norm or session.plate_number
     session.match_status = "manual"
 
     # Cập nhật trạng thái thẻ RFID thành "available" khi force checkout
@@ -2704,7 +2718,9 @@ async def force_checkout(
     await notify_clients("parking_update", {
         "action": "force_checkout",
         "gate_type": "exit",
-        "plate": plate_norm,
+        "plate": session.plate_number,
+        "plate_out": session.plate_out,
+        "rfid_tag": rfid_norm or session.rfid_tag,
         "fee": fee,
         "parking_fee": parking_fee,
         "compensation_fee": compensation_fee,
@@ -2716,7 +2732,9 @@ async def force_checkout(
     return {
         "status": "ok",
         "session_id": session.id,
-        "plate_number": plate_norm,
+        "plate_number": session.plate_number,
+        "plate_out": session.plate_out,
+        "rfid_tag": rfid_norm or session.rfid_tag,
         "duration_minutes": duration_minutes,
         "fee": fee,
         "parking_fee": parking_fee,

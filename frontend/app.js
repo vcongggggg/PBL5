@@ -498,26 +498,38 @@ function getGatePlateCandidate(gate) {
     return (candidates.find((value) => value && value !== "UNKNOWN" && value !== "PROCESSING" && value !== "...") || "").trim();
 }
 
+function getGateRfidCandidate(gate) {
+    const data = latestGateResults[gate] || {};
+    const cfg = gateState[gate];
+    const candidates = [
+        data.rfid_tag,
+        cfg?.rfidInput?.value,
+    ];
+    return (candidates.find((value) => value && value !== "-" && value !== "UNKNOWN") || "").trim();
+}
+
 async function forceCheckoutFromMonitoring(gate, reason) {
     if (gate !== "exit") {
         alert("Giai phong xe chi ap dung cho lan ra. Lan vao chi nen dung 'open_only' hoac 'emergency'.");
         return false;
     }
 
+    const rfidTag = getGateRfidCandidate(gate);
     let plate = getGatePlateCandidate(gate);
-    if (!plate) {
+    if (!plate && !rfidTag) {
         plate = (window.prompt("Nhap bien so xe can giai phong:", "") || "").trim();
     }
-    if (!plate) return false;
+    if (!plate && !rfidTag) return false;
 
     const confirmText = reason === "lost_card"
-        ? `Xac nhan giai phong xe ${plate}, tinh phi gui xe + phi den bu mat RFID va mo cong ra?`
-        : `Xac nhan dong session xe ${plate} va mo cong ra?`;
+        ? `Xac nhan giai phong xe ${plate || rfidTag}, tinh phi gui xe + phi den bu mat RFID va mo cong ra?`
+        : `Xac nhan dong session xe ${plate || rfidTag} va mo cong ra?`;
     if (!window.confirm(confirmText)) return false;
 
     setStatus(gate, "Dang giai phong xe va tinh phi...", "warn");
     const formData = new FormData();
-    formData.append("plate_number", plate);
+    if (plate) formData.append("plate_number", plate);
+    if (rfidTag) formData.append("rfid_tag", rfidTag);
     formData.append("reason", reason);
     formData.append("open_gate", "true");
     formData.append("operator", "admin");
