@@ -1,6 +1,8 @@
 const API_BASE = "http://localhost:8000";
 let parkingChart = null;
 let currentFireStatus = { active: false, message: "Hệ thống báo cháy đang bình thường." };
+let currentFireAlerts = [];
+let fireOverlayDismissedForActive = false;
 
 function initParkingChart() {
     const ctx = document.getElementById('parkingFlowChart').getContext('2d');
@@ -599,6 +601,53 @@ function renderFireAlerts(alerts) {
     });
 }
 
+function updateFireEmergencyOverlay() {
+    const overlay = document.getElementById("fireEmergencyOverlay");
+    if (!overlay) return;
+
+    const active = Boolean(currentFireStatus?.active);
+    if (!active) {
+        overlay.classList.add("hidden");
+        document.body.classList.remove("overflow-hidden");
+        fireOverlayDismissedForActive = false;
+        return;
+    }
+
+    const latest = currentFireAlerts?.[0];
+    const count = Number(currentFireStatus?.unacknowledged_count ?? currentFireAlerts.length ?? 0);
+    const overlayMessage = document.getElementById("fireOverlayMessage");
+    const overlayLatest = document.getElementById("fireOverlayLatest");
+    const overlayCount = document.getElementById("fireOverlayCount");
+
+    if (overlayMessage) {
+        overlayMessage.textContent = currentFireStatus?.message || "Cổng vào/ra đang được giữ mở cho đến khi bảo vệ reset.";
+    }
+    if (overlayLatest) {
+        overlayLatest.textContent = latest
+            ? `${latest.sensor_id} - ${latest.message || "Phát hiện cảnh báo cháy"}`
+            : "Đang giữ trạng thái báo cháy. Cổng vào/ra vẫn mở.";
+    }
+    if (overlayCount) {
+        overlayCount.textContent = `${count} cảnh báo`;
+    }
+
+    overlay.classList.toggle("hidden", fireOverlayDismissedForActive);
+    document.body.classList.toggle("overflow-hidden", !fireOverlayDismissedForActive);
+}
+
+async function resetFireAlarm() {
+    const res = await fetch(`${API_BASE}/api/fire/reset`, {
+        method: "POST",
+        headers: {
+            "X-API-Key": "pbl5_secure_key_12345"
+        }
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Reset failed");
+    await fetchFireAlerts();
+    return data;
+}
+
 async function fetchFireAlerts() {
     try {
         const [statusRes, alertsRes] = await Promise.all([
@@ -608,7 +657,9 @@ async function fetchFireAlerts() {
         if (!statusRes.ok || !alertsRes.ok) throw new Error("fire fetch failed");
         currentFireStatus = await statusRes.json();
         const alerts = await alertsRes.json();
+        currentFireAlerts = alerts;
         renderFireAlerts(alerts);
+        updateFireEmergencyOverlay();
     } catch (err) {
         console.error(err);
     }
@@ -832,21 +883,39 @@ function bindGlobalActions() {
 
     document.getElementById("resetFireBtn").addEventListener("click", async () => {
         try {
-            const res = await fetch(`${API_BASE}/api/fire/reset`, {
-                method: "POST",
-                headers: {
-                    "X-API-Key": "pbl5_secure_key_12345"
-                }
-            });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Reset failed");
+            const data = await resetFireAlarm();
             alert(data.message || "Đã tắt chuông báo động cháy và thiết bị.");
-            await fetchFireAlerts();
         } catch (err) {
             console.error(err);
             alert("Lỗi: " + (err.message || "Không thể gửi lệnh tắt báo động"));
         }
     });
+
+    const fireOverlayResetBtn = document.getElementById("fireOverlayResetBtn");
+    if (fireOverlayResetBtn) {
+        fireOverlayResetBtn.addEventListener("click", async () => {
+            try {
+                fireOverlayResetBtn.disabled = true;
+                fireOverlayResetBtn.classList.add("opacity-70");
+                const data = await resetFireAlarm();
+                alert(data.message || "Đã reset báo cháy.");
+            } catch (err) {
+                console.error(err);
+                alert("Lỗi: " + (err.message || "Không thể reset báo cháy"));
+            } finally {
+                fireOverlayResetBtn.disabled = false;
+                fireOverlayResetBtn.classList.remove("opacity-70");
+            }
+        });
+    }
+
+    const fireOverlayAckBtn = document.getElementById("fireOverlayAckBtn");
+    if (fireOverlayAckBtn) {
+        fireOverlayAckBtn.addEventListener("click", () => {
+            fireOverlayDismissedForActive = true;
+            updateFireEmergencyOverlay();
+        });
+    }
 
     document.getElementById("forceCheckoutBtn").addEventListener("click", async () => {
         const plate = document.getElementById("forceCheckoutPlate").value.trim();
@@ -1040,6 +1109,7 @@ function initWebSocket() {
                 }, 8000);
             }
         } else if (payload.event === "fire_alert") {
+            fireOverlayDismissedForActive = false;
             fetchFireAlerts();
             alert("CẢNH BÁO KHẨN CẤP: PHÁT HIỆN SỰ CỐ HOẢ HOẠN TẠI BÃI GỬI XE!");
         } else if (payload.event === "fire_reset") {
