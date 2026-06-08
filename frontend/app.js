@@ -422,21 +422,60 @@ const MANUAL_OPEN_REASONS = {
     system_error: "Camera/cam bien/he thong loi"
 };
 
-function askManualOpenReason() {
-    const hint = [
-        "Chon muc dich mo cong:",
-        "open_only = chi mo cong, khong dong session",
-        "verified_plate = bien so dung, giai phong xe va mo cong",
-        "lost_card = mat RFID, tinh phi den bu va mo cong",
-        "system_error = loi camera/cam bien, giai phong xe va mo cong",
-        "emergency = mo khan cap",
-        "maintenance = kiem tra/bao tri",
-        "manual_override = bao ve xac nhan thu cong"
-    ].join("\n");
-    const value = window.prompt(hint, "open_only");
-    if (value === null) return null;
-    const reason = value.trim().toLowerCase();
-    return MANUAL_OPEN_REASONS[reason] ? reason : "manual_override";
+function askManualOpenReason(gate) {
+    return new Promise((resolve) => {
+        const oldModal = document.getElementById("manualOpenReasonModal");
+        if (oldModal) oldModal.remove();
+
+        const options = [
+            ["open_only", "Chi mo cong", "Khong dong session, khong tinh phi"],
+            ["verified_plate", "Bien so dung", "Dong session xe dang hien thi va mo cong"],
+            ["lost_card", "Mat RFID", "Dong session, tinh phi den bu va mo cong"],
+            ["system_error", "Loi he thong", "Camera/cam bien loi, bao ve xac nhan cho ra"],
+            ["emergency", "Mo khan cap", "Chi mo cong trong tinh huong khan cap"],
+            ["maintenance", "Bao tri", "Chi mo cong de kiem tra thiet bi"],
+        ];
+
+        const modal = document.createElement("div");
+        modal.id = "manualOpenReasonModal";
+        modal.className = "fixed inset-0 z-[9999] bg-black/55 backdrop-blur-sm flex items-center justify-center p-4";
+        modal.innerHTML = `
+            <div class="w-full max-w-lg bg-surface-card border border-border-subtle rounded-xl shadow-2xl overflow-hidden">
+                <div class="px-5 py-4 border-b border-border-subtle/60">
+                    <p class="text-[10px] uppercase tracking-[0.14em] text-primary font-bold">Mo cong thu cong - ${gate === "exit" ? "Lan ra" : "Lan vao"}</p>
+                    <h3 class="text-base font-extrabold text-on-surface mt-1">Chon muc dich mo cong</h3>
+                    <p class="text-xs text-on-surface-variant/75 mt-1">Cac muc giai phong xe se dong session va ghi log thao tac cua bao ve.</p>
+                </div>
+                <div class="p-4 grid gap-2">
+                    ${options.map(([value, title, desc]) => `
+                        <button type="button" data-manual-reason="${value}" class="text-left px-4 py-3 rounded-lg border border-border-subtle/70 bg-surface-container-low hover:border-primary hover:bg-primary/10 transition-all">
+                            <span class="block text-sm font-bold text-on-surface">${title}</span>
+                            <span class="block text-xs text-on-surface-variant/75 mt-0.5">${desc}</span>
+                        </button>
+                    `).join("")}
+                </div>
+                <div class="px-4 py-3 bg-surface-container-low/60 border-t border-border-subtle/50 flex justify-end">
+                    <button type="button" data-manual-cancel class="px-4 py-2 rounded-lg border border-border-subtle text-xs font-bold text-on-surface hover:bg-surface-container-low transition-all">Huy</button>
+                </div>
+            </div>
+        `;
+
+        const close = (value) => {
+            modal.remove();
+            resolve(value);
+        };
+        modal.addEventListener("click", (event) => {
+            if (event.target === modal || event.target.closest("[data-manual-cancel]")) {
+                close(null);
+                return;
+            }
+            const reasonBtn = event.target.closest("[data-manual-reason]");
+            if (reasonBtn) {
+                close(reasonBtn.dataset.manualReason || "open_only");
+            }
+        });
+        document.body.appendChild(modal);
+    });
 }
 
 function getGatePlateCandidate(gate) {
@@ -508,7 +547,7 @@ async function forceCheckoutFromMonitoring(gate, reason) {
 
 async function forceOpenGate(gate) {
     try {
-        const reason = askManualOpenReason();
+        const reason = await askManualOpenReason(gate);
         if (!reason) return;
         if (["verified_plate", "lost_card", "system_error", "manual_override"].includes(reason) && gate === "exit") {
             const handled = await forceCheckoutFromMonitoring(gate, reason);
