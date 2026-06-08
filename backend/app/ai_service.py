@@ -34,6 +34,43 @@ _ocr_reader = None
 logger = logging.getLogger(__name__)
 
 
+def _line_position(points) -> Tuple[float, float]:
+    if points is None:
+        return 0.0, 0.0
+    arr = np.asarray(points, dtype=float)
+    if arr.size == 0:
+        return 0.0, 0.0
+    if arr.ndim == 1 and arr.size >= 4:
+        x1, y1, x2, y2 = arr[:4]
+        return float(min(y1, y2)), float(min(x1, x2))
+    arr = arr.reshape(-1, 2)
+    return float(arr[:, 1].mean()), float(arr[:, 0].mean())
+
+
+def _looks_like_plate_prefix(text: str) -> bool:
+    normalized = normalize_plate(text)
+    return bool(re.search(r"[A-Z]", normalized)) and any(ch.isdigit() for ch in normalized)
+
+
+def _order_ocr_lines(items: List[Dict]) -> List[str]:
+    with_boxes = [item for item in items if item.get("points") is not None]
+    if with_boxes:
+        return [
+            item["text"]
+            for item in sorted(
+                items,
+                key=lambda item: (*_line_position(item.get("points")), item.get("index", 0)),
+            )
+        ]
+
+    texts = [item["text"] for item in items]
+    if len(texts) == 2:
+        first, second = texts
+        if _looks_like_plate_prefix(second) and not _looks_like_plate_prefix(first):
+            return [second, first]
+    return texts
+
+
 def _decode_image(image_bytes: bytes):
     np_arr = np.frombuffer(image_bytes, np.uint8)
     return cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
@@ -81,20 +118,27 @@ def _read_plate_roi(plate_roi) -> Tuple[str, float]:
     if not ocr_results:
         return "", 0.0
 
-    all_texts = []
+    text_items = []
     best_ocr_conf = 0.0
 
     for res in ocr_results:
         texts = res.get('rec_texts', [])
         scores = res.get('rec_scores', [])
+        polys = res.get('rec_polys') or res.get('rec_boxes') or res.get('dt_polys') or []
         for i, text in enumerate(texts):
             score = scores[i] if i < len(scores) else 0.0
             if text:
-                all_texts.append(text)
+                text_items.append({
+                    "text": text,
+                    "score": float(score),
+                    "points": polys[i] if i < len(polys) else None,
+                    "index": i,
+                })
                 if float(score) > best_ocr_conf:
                     best_ocr_conf = float(score)
 
-    return normalize_plate("".join(all_texts)), best_ocr_conf
+    ordered_texts = _order_ocr_lines(text_items)
+    return normalize_plate("".join(ordered_texts)), best_ocr_conf
 
 
 def _load_yolo_model() -> None:

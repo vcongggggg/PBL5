@@ -1164,6 +1164,16 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
 
     def test_42_plate_normalization_lowercase_spaces_and_symbols(self):
         self.assertEqual(main_module.ai_service.normalize_plate(" 51f-123 45 "), "51F12345")
+        ordered = main_module.ai_service._order_ocr_lines([
+            {"text": "544.32", "points": None, "index": 0},
+            {"text": "61C", "points": None, "index": 1},
+        ])
+        self.assertEqual(main_module.ai_service.normalize_plate("".join(ordered)), "61C54432")
+        positioned = main_module.ai_service._order_ocr_lines([
+            {"text": "544.32", "points": [[0, 40], [80, 40], [80, 60], [0, 60]], "index": 0},
+            {"text": "61C", "points": [[0, 0], [80, 0], [80, 20], [0, 20]], "index": 1},
+        ])
+        self.assertEqual(main_module.ai_service.normalize_plate("".join(positioned)), "61C54432")
 
     async def test_43_exit_fuzzy_boundary_camera_vs_rfid(self):
         card_sensor = self.add_guest_card("FUZZS", status="in_use")
