@@ -371,10 +371,10 @@ def _load_yolo_model() -> None:
         except Exception:
             logger.exception("Failed to load YOLO model from configured path")
             try:
-                _yolo_model = YOLO("yolov8n.pt")
-                logger.warning("Falling back to yolov8n.pt because the configured plate model could not be loaded")
+                _yolo_model = YOLO("yolo11n.pt")
+                logger.warning("Falling back to yolo11n.pt because the configured plate model could not be loaded")
             except Exception:
-                logger.exception("Failed to load fallback YOLO model yolov8n.pt")
+                logger.exception("Failed to load fallback YOLO model yolo11n.pt")
                 _yolo_model = None
 
 
