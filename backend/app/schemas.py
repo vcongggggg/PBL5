@@ -122,6 +122,15 @@ class FireAlertResponse(BaseModel):
     message: str
 
 
+class FireTelemetryPoint(BaseModel):
+    device_id: str
+    digital_value: int
+    analog_value: int
+    fire_detected: bool
+    fire_alert_active: bool
+    timestamp: str
+
+
 class DashboardStats(BaseModel):
     total_in_bay: int
     guest_in_bay: int = 0

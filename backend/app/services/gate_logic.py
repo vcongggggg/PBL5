@@ -14,6 +14,7 @@ from ..integrations.mqtt_manager import mqtt_manager
 from ..services import ai_service, camera_service
 from ..services.config_service import get_config_bool, get_config_text, get_system_config_value
 from ..services.fire_service import is_fire_alarm_blocking, set_fire_alarm_active
+from ..services.fire_telemetry_service import add_fire_telemetry
 from ..services.image_storage import image_url_from_path
 from fastapi import HTTPException
 from ..services.image_storage import save_upload_image, crop_image_bytes_by_bbox
@@ -808,6 +809,16 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
                 "timestamp": alert.created_at.isoformat(),
                 "gate_opened": gate_opened,
             })
+
+        elif event_type == "fire_telemetry":
+            point = add_fire_telemetry(
+                device_id=device_id,
+                digital_value=payload.get("digital_value", 1),
+                analog_value=payload.get("analog_value", payload.get("sensor_value", 0)),
+                fire_detected=payload.get("fire_detected", False),
+                fire_alert_active=payload.get("fire_alert_active", False),
+            )
+            await notify_clients("fire_telemetry", point)
 
     except Exception as e:
         logger.error(f"Lỗi khi xử lý handle_mqtt_event: {e}")

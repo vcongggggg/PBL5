@@ -123,3 +123,19 @@ void publishFireAlert(int sensorValue) {
   mqttClient.publish(MQTT_TOPIC_FIRE_ALERT, body.c_str(), false);
   Serial.println("[MQTT] Đã gửi cảnh báo hoả hoạn!");
 }
+
+void publishFireTelemetry(int digitalValue, int analogValue, bool fireDetected, bool fireAlertActive) {
+  if (!mqttClient.connected()) {
+    return;
+  }
+
+  String body = "{";
+  body += "\"device_id\":\"" + String(MQTT_CLIENT_ID) + "\",";
+  body += "\"digital_value\":" + String(digitalValue) + ",";
+  body += "\"analog_value\":" + String(analogValue) + ",";
+  body += "\"fire_detected\":" + String(fireDetected ? "true" : "false") + ",";
+  body += "\"fire_alert_active\":" + String(fireAlertActive ? "true" : "false");
+  body += "}";
+
+  mqttClient.publish(MQTT_TOPIC_FIRE_TELEMETRY, body.c_str(), false);
+}

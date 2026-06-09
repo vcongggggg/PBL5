@@ -10,6 +10,7 @@ static const char *MQTT_CLIENT_ID = "esp32-barrier-01";
 static const char *MQTT_TOPIC_CAR_DETECTED = "parking/device/esp32-barrier-01/event/car_detected";
 static const char *MQTT_TOPIC_RFID_SCAN = "parking/device/esp32-barrier-01/event/rfid_scan";
 static const char *MQTT_TOPIC_FIRE_ALERT = "parking/device/esp32-barrier-01/event/fire_alert";
+static const char *MQTT_TOPIC_FIRE_TELEMETRY = "parking/device/esp32-barrier-01/event/fire_telemetry";
 static const char *MQTT_TOPIC_COMMAND_OPEN = "parking/device/esp32-barrier-01/command/open_gate";
 static const char *MQTT_TOPIC_COMMAND_RESET_FIRE = "parking/device/esp32-barrier-01/command/reset_fire";
 
@@ -24,6 +25,7 @@ static const int IR_OUT_PIN = 26;
 
 // Fire sensor
 static const int FIRE_SENSOR_PIN = 33;
+static const int FIRE_ANALOG_PIN = 34;
 
 // RFID RC522 (SPI)
 static const int RFID_SS_PIN = 5;
@@ -39,6 +41,7 @@ static const unsigned long AUTO_CLOSE_MS = 5000;
 static const unsigned long FIRE_ALERT_COOLDOWN_MS = 10000;
 static const unsigned long FIRE_CONFIRM_MS = 1200;
 static const unsigned long FIRE_CLEAR_CONFIRM_MS = 3000;
+static const unsigned long FIRE_TELEMETRY_INTERVAL_MS = 1000;
 static const unsigned long IR_CONFIRM_MS = 300;
 
 #endif

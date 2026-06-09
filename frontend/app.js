@@ -1,5 +1,6 @@
 const API_BASE = "http://localhost:8000";
 let parkingChart = null;
+let fireTelemetryChart = null;
 let currentFireStatus = { active: false, message: "Hệ thống báo cháy đang bình thường." };
 let currentFireAlerts = [];
 let fireOverlayDismissedForActive = false;
@@ -81,6 +82,92 @@ function initParkingChart() {
             }
         }
     });
+}
+
+function initFireTelemetryChart() {
+    const canvas = document.getElementById("fireTelemetryChart");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    const isDark = document.documentElement.classList.contains("dark");
+    const textColor = isDark ? "#94a3b8" : "#475569";
+    const gridColor = isDark ? "rgba(148, 163, 184, 0.18)" : "rgba(226, 232, 240, 0.75)";
+
+    fireTelemetryChart = new Chart(ctx, {
+        type: "line",
+        data: {
+            labels: [],
+            datasets: [{
+                label: "Giá trị A0",
+                data: [],
+                borderColor: "#e11d48",
+                backgroundColor: "rgba(225, 29, 72, 0.08)",
+                borderWidth: 2,
+                tension: 0.3,
+                fill: true,
+                pointRadius: 0,
+                pointHoverRadius: 4,
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            animation: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: textColor, font: { family: "Inter", size: 10, weight: "600" } }
+                },
+                tooltip: { mode: "index", intersect: false }
+            },
+            scales: {
+                x: {
+                    grid: { color: gridColor },
+                    ticks: { color: textColor, maxTicksLimit: 6, font: { family: "Inter", size: 10 } }
+                },
+                y: {
+                    min: 0,
+                    max: 4095,
+                    grid: { color: gridColor },
+                    ticks: { color: textColor, font: { family: "Inter", size: 10 } }
+                }
+            }
+        }
+    });
+}
+
+function pushFireTelemetryPoint(point) {
+    if (!fireTelemetryChart || !point) return;
+    const timestamp = point.timestamp ? new Date(point.timestamp) : new Date();
+    const label = timestamp.toLocaleTimeString("vi-VN", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    const value = Number(point.analog_value ?? 0);
+
+    fireTelemetryChart.data.labels.push(label);
+    fireTelemetryChart.data.datasets[0].data.push(value);
+    while (fireTelemetryChart.data.labels.length > 60) {
+        fireTelemetryChart.data.labels.shift();
+        fireTelemetryChart.data.datasets[0].data.shift();
+    }
+    fireTelemetryChart.update("none");
+
+    const latest = document.getElementById("fireTelemetryLatest");
+    if (latest) {
+        const digitalText = Number(point.digital_value) === 0 ? "DO: phát hiện" : "DO: bình thường";
+        latest.textContent = `A0: ${value} / 4095 · ${digitalText}`;
+    }
+}
+
+async function fetchFireTelemetry() {
+    try {
+        const res = await fetch(`${API_BASE}/api/fire/telemetry?limit=60`);
+        if (!res.ok) return;
+        const rows = await res.json();
+        if (!fireTelemetryChart) return;
+        fireTelemetryChart.data.labels = [];
+        fireTelemetryChart.data.datasets[0].data = [];
+        rows.forEach(pushFireTelemetryPoint);
+    } catch (err) {
+        console.warn("Không thể tải dữ liệu A0 cảm biến cháy", err);
+    }
 }
 
 function updateChartFromHistory(rows) {
@@ -1384,6 +1471,8 @@ function initWebSocket() {
             fetchFireAlerts();
         } else if (payload.event === "fire_reset") {
             fetchFireAlerts();
+        } else if (payload.event === "fire_telemetry") {
+            pushFireTelemetryPoint(payload.data || {});
         } else if (payload.event === "pending_scan") {
             const d = payload.data || {};
             const gate = d.gate_type === "entry" ? "entry" : "exit";
@@ -1427,11 +1516,13 @@ window.onload = async () => {
     stopCamera("exit");
     
     initParkingChart();
+    initFireTelemetryChart();
     
     await fetchDashboard();
     await fetchMonthlyRegistrations();
     await fetchParkingHistory();
     await fetchFireAlerts();
+    await fetchFireTelemetry();
     
     initWebSocket();
     statusBarInterval = setInterval(fetchDashboard, 30000);

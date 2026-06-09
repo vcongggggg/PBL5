@@ -13,6 +13,7 @@ from .. import state
 from ..services.realtime import notify_clients
 from ..services.gate_logic import handle_critical_fire_gate_open
 from ..services.fire_service import resolve_open_fire_alerts, is_fire_alarm_blocking
+from ..services.fire_telemetry_service import list_fire_telemetry
 
 from ..services.fire_service import set_fire_alarm_active
 
@@ -163,6 +164,11 @@ def get_fire_status(db: Session = Depends(get_db)):
         warning_count=warning_count,
         message=message,
     )
+
+
+@router.get("/api/fire/telemetry", response_model=List[schemas.FireTelemetryPoint])
+def get_fire_telemetry(limit: int = 120):
+    return list_fire_telemetry(limit)
 
 
 @router.patch("/api/fire-alerts/{alert_id}/ack", response_model=schemas.FireAlert)

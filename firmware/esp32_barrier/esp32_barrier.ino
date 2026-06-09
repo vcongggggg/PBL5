@@ -14,6 +14,7 @@ bool fireAlertActive = false;
 unsigned long lastFireAlertSentAt = 0;
 unsigned long fireLowStartedAt = 0;
 unsigned long fireHighStartedAt = 0;
+unsigned long lastFireTelemetrySentAt = 0;
 unsigned long lastIrInSentAt = 0;
 unsigned long lastIrOutSentAt = 0;
 unsigned long irInLowStartedAt = 0;
@@ -41,6 +42,7 @@ void setupInputPins() {
   pinMode(IR_IN_PIN, INPUT_PULLUP);
   pinMode(IR_OUT_PIN, INPUT_PULLUP);
   pinMode(FIRE_SENSOR_PIN, INPUT_PULLUP);
+  pinMode(FIRE_ANALOG_PIN, INPUT);
 }
 
 void handleIrSensors() {
@@ -103,9 +105,15 @@ void handleRfid() {
 
 void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
+  int fireAnalogValue = analogRead(FIRE_ANALOG_PIN);
   bool fireDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
 
   unsigned long now = millis();
+  if (now - lastFireTelemetrySentAt >= FIRE_TELEMETRY_INTERVAL_MS) {
+    publishFireTelemetry(fireValue, fireAnalogValue, fireDetected, fireAlertActive);
+    lastFireTelemetrySentAt = now;
+  }
+
   if (fireDetected) {
     fireHighStartedAt = 0;
     if (fireLowStartedAt == 0) {

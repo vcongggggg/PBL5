@@ -50,6 +50,7 @@ class MQTTManager:
             self.client.subscribe("parking/device/+/event/car_detected")
             self.client.subscribe("parking/device/+/event/rfid_scan")
             self.client.subscribe("parking/device/+/event/fire_alert")
+            self.client.subscribe("parking/device/+/event/fire_telemetry")
             logger.info("Subscribed to MQTT topics.")
         else:
             logger.error(f"MQTT connection failed with code {rc}")
