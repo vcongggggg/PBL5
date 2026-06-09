@@ -1056,14 +1056,31 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
 
     def test_37_dashboard_counts_open_sessions_and_today_totals(self):
         now = get_vietnam_now()
+        today_mid = datetime(now.year, now.month, now.day, 12, 0)
         open_card = self.add_guest_card("DASHOPEN", status="in_use")
-        self.add_open_session("51F70701", "DASHOPEN", open_card)
+        
+        session_open = models.ParkingSession(
+            plate_number="51F70701",
+            time_in=today_mid,
+            time_out=None,
+            fee=0,
+            gate_type="entry",
+            trigger_type="rfid",
+            rfid_tag="DASHOPEN",
+            rfid_card_id=open_card.id,
+            rfid_card_type="guest",
+            plate_in="51F70701",
+            confidence_in=0.95,
+            match_status="pending",
+        )
+        self.db.add(session_open)
+        
         self.db.add(models.ParkingSession(
-            plate_number="51F70702", time_in=now - timedelta(hours=2), time_out=now - timedelta(hours=1),
+            plate_number="51F70702", time_in=today_mid - timedelta(hours=2), time_out=today_mid - timedelta(hours=1),
             fee=5000, match_status="matched", rfid_card_type="guest",
         ))
         self.db.add(models.ParkingSession(
-            plate_number="51F70703", time_in=now - timedelta(days=1, hours=2), time_out=now - timedelta(days=1, hours=1),
+            plate_number="51F70703", time_in=today_mid - timedelta(days=1), time_out=today_mid - timedelta(days=1, hours=1),
             fee=5000, match_status="matched", rfid_card_type="guest",
         ))
         self.db.commit()

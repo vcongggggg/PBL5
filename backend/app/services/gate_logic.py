@@ -39,6 +39,7 @@ PLATE_SCAN_INTERVAL_SECONDS = 0.35
 MSG_RFID_ONLY_EXIT = "Camera không đọc được biển số, hệ thống cho ra theo RFID dự phòng."
 MSG_RFID_ONLY_EXIT_DISABLED = "Camera không đọc được biển số. Chế độ cho ra dự phòng bằng RFID đang tắt."
 _pending_rfid_scans = {}
+_rfid_scan_lock = asyncio.Lock()
 
 async def process_gate_scan(
     db: Session,
@@ -516,7 +517,204 @@ def handle_critical_fire_gate_open() -> bool:
     _last_fire_gate_open_at = now
     return True
 
-async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate_type: str, device_id: str, direction: str):
+async def process_rfid_swipe(
+    db: Session,
+    uid: str,
+    device_id: str,
+    direction_hint: str = "in",
+    gate_id: Optional[str] = None,
+    is_http: bool = False
+) -> dict:
+    """
+    Xử lý quẹt thẻ RFID (dùng chung cho cả MQTT và HTTP API).
+    Trả về dict chứa thông tin kết quả để phản hồi cho caller.
+    """
+    uid_norm = uid.strip().upper().replace(" ", "").replace(":", "")
+    if not uid_norm:
+        return {
+            "action": "ignore",
+            "uid": "",
+            "message": "Mã thẻ RFID trống",
+            "direction": direction_hint,
+            "gate_type": "entry",
+        }
+
+    # 1. Tự động chuyển thẻ từ whitelist cấu hình vào DB nếu chưa tồn tại
+    card = get_rfid_card(db, uid_norm)
+    if not card:
+        whitelist_raw = get_config_text(db, "rfid_uid_whitelist", "")
+        whitelist = {
+            item.strip().upper().replace(" ", "")
+            for item in whitelist_raw.split(",")
+            if item.strip()
+        }
+        if uid_norm in whitelist:
+            card = models.RFIDCard(
+                card_uid=uid_norm,
+                card_type="guest",
+                is_active=True,
+            )
+            db.add(card)
+            db.commit()
+            db.refresh(card)
+
+    # 2. Xác định hướng logic dựa trên session mở trong DB (Smart direction detection)
+    open_session = (
+        db.query(models.ParkingSession)
+        .filter(
+            models.ParkingSession.rfid_tag == uid_norm,
+            models.ParkingSession.time_out.is_(None),
+        )
+        .order_by(models.ParkingSession.time_in.desc())
+        .first()
+    )
+    
+    # Nếu là thẻ tháng và không tìm thấy theo RFID tag, thử tìm theo biển số xe đăng ký
+    if not open_session and card and card.card_type == "monthly" and card.vehicle:
+        registered_plate = ai_service.normalize_plate(card.vehicle.plate_number)
+        open_session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.plate_number == registered_plate,
+                models.ParkingSession.time_out.is_(None),
+            )
+            .order_by(models.ParkingSession.time_in.desc())
+            .first()
+        )
+        
+    logical_direction = "out" if open_session else "in"
+
+    # 3. Kiểm tra hàng đợi quét biển số ở cả 2 hướng (< 45 giây)
+    pending_entry = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
+    pending_exit = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").first()
+    
+    now_dt = get_vietnam_now()
+    EXPIRE_SECONDS = 45
+    
+    active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+    active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
+    
+    # Giải quyết hướng thực tế dựa trên các queue có xe đang chờ
+    resolved_gate_type = None
+    if active_entry and not active_exit:
+        resolved_gate_type = "entry"
+    elif active_exit and not active_entry:
+        resolved_gate_type = "exit"
+    elif active_entry and active_exit:
+        resolved_gate_type = "entry" if logical_direction == "in" else "exit"
+    else:
+        # Fallback về hướng payload gửi lên hoặc gợi ý
+        resolved_gate_type = "entry" if direction_hint == "in" else "exit"
+
+    direction = "in" if resolved_gate_type == "entry" else "out"
+    gate_type = resolved_gate_type
+    
+    pending = active_entry if gate_type == "entry" else active_exit
+
+    if not pending and gate_type == "entry" and card and card.status == "in_use":
+        result_payload = {
+            "action": "ignore",
+            "uid": uid_norm,
+            "message": "Thẻ RFID đang được sử dụng bởi xe khác",
+            "direction": direction,
+            "gate_id": gate_id,
+        }
+        if not is_http:
+            await notify_clients("parking_update", {
+                "action": "ignore",
+                "gate_type": gate_type,
+                "plate": "UNKNOWN",
+                "rfid_tag": uid_norm,
+                "confidence": 0.0,
+                "matched": False,
+                "message": "Thẻ RFID đang được sử dụng bởi xe khác",
+            })
+        return result_payload
+
+    # 4. Dự phòng cho cổng ra: nếu camera hỏng/không có pending_scan nhưng thẻ có open session -> Cho phép ra (UNKNOWN plate fallback)
+    if not pending and gate_type == "exit" and open_session:
+        result = await process_gate_scan(
+            db=db,
+            image_bytes=None,
+            filename=None,
+            gate_type=gate_type,
+            trigger_type="rfid",
+            source_id=device_id,
+            rfid_tag=uid_norm,
+            override_plate="UNKNOWN",
+            override_confidence=0.0,
+            existing_image_path=None,
+        )
+        if result.action == "open" and not is_http:
+            mqtt_manager.publish_open_gate(device_id, direction)
+        
+        result_payload = {
+            "action": result.action,
+            "uid": uid_norm,
+            "message": result.message,
+            "direction": direction,
+            "gate_id": gate_id,
+        }
+        if not is_http:
+            await notify_clients("parking_update", {
+                "action": result.action,
+                "gate_type": gate_type,
+                "plate": result.recognized_plate,
+                "plate_in": result.plate_in,
+                "plate_out": result.plate_out,
+                "session_id": result.session_id,
+                "rfid_tag": uid_norm,
+                "confidence": result.confidence,
+                "duration_minutes": result.duration_minutes,
+                "fee": result.fee,
+                "matched": result.matched,
+                "image_url": result.image_url,
+                "plate_in_image_url": result.plate_in_image_url,
+                "message": result.message,
+            })
+        return result_payload
+
+    if not pending:
+        result_payload = {
+            "action": "ignore",
+            "uid": uid_norm,
+            "message": "Vui lòng đỗ xe đúng vị trí cảm biến trước khi quẹt thẻ",
+            "direction": direction,
+            "gate_id": gate_id,
+        }
+        if not is_http:
+            await notify_clients("parking_update", {
+                "action": "ignore",
+                "gate_type": gate_type,
+                "plate": "UNKNOWN",
+                "confidence": 0.0,
+                "message": "Vui lòng đỗ xe đúng vị trí cảm biến trước khi quẹt thẻ",
+            })
+        return result_payload
+
+    # 5. Nếu AI vẫn đang PROCESSING -> Đưa vào hàng chờ quẹt sớm (Protected by Lock)
+    if pending.plate_number == "PROCESSING":
+        logger.info(f"RFID early swipe detected for {gate_type}. Storing in _pending_rfid_scans.")
+        async with _rfid_scan_lock:
+            _pending_rfid_scans[gate_type] = (uid_norm, device_id, now_dt)
+        
+        message_processing = "Đang nhận diện biển số, vui lòng đợi 2-3 giây rồi quẹt lại" if is_http else "Đang nhận dạng biển số, vui lòng giữ nguyên vị trí, cổng sẽ mở tự động..."
+        if not is_http:
+            await notify_clients("pending_scan", {
+                "gate_type": gate_type,
+                "recognized_plate": "PROCESSING",
+                "confidence": 0.0,
+                "message": "Đang nhận dạng biển số, vui lòng giữ nguyên vị trí, cổng sẽ mở tự động..."
+            })
+        return {
+            "action": "ignore" if is_http else "processing",
+            "uid": uid_norm,
+            "message": message_processing,
+            "direction": direction,
+            "gate_id": gate_id,
+        }
+
+    # 6. Nếu đã xử lý xong AI, gọi hàm validation bình thường
     recognized_plate = pending.plate_number
     image_path = pending.image_path
     confidence = pending.confidence
@@ -534,33 +732,53 @@ async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate
         existing_image_path=image_path,
     )
 
-    if result.action == "open":
+    if result.action == "open" and not is_http:
         mqtt_manager.publish_open_gate(device_id, direction)
 
-    await notify_clients("parking_update", {
+    result_payload = {
         "action": result.action,
-        "gate_type": gate_type,
-        "plate": result.recognized_plate,
-        "plate_in": result.plate_in,
-        "plate_out": result.plate_out,
-        "session_id": result.session_id,
-        "rfid_tag": uid_norm,
-        "confidence": result.confidence,
-        "duration_minutes": result.duration_minutes,
-        "fee": result.fee,
-        "matched": result.matched,
-        "image_url": result.image_url,
-        "plate_in_image_url": result.plate_in_image_url,
+        "uid": uid_norm,
         "message": result.message,
-    })
+        "direction": direction,
+        "gate_id": gate_id,
+    }
+
+    if not is_http:
+        await notify_clients("parking_update", {
+            "action": result.action,
+            "gate_type": gate_type,
+            "plate": result.recognized_plate,
+            "plate_in": result.plate_in,
+            "plate_out": result.plate_out,
+            "session_id": result.session_id,
+            "rfid_tag": uid_norm,
+            "confidence": result.confidence,
+            "duration_minutes": result.duration_minutes,
+            "fee": result.fee,
+            "matched": result.matched,
+            "image_url": result.image_url,
+            "plate_in_image_url": result.plate_in_image_url,
+            "message": result.message,
+        })
 
     # Chỉ xóa pending scan khi cổng được mở thành công (action == "open")
-    # Nếu validation thất bại (vd: sai thẻ, hết hạn, biển mờ), giữ lại pending scan 
-    # để người dùng có thể quẹt thẻ lại hoặc quét lại mà không cần lùi xe kích hoạt cảm biến.
     should_delete_pending = (result.action == "open")
     if should_delete_pending:
         db.delete(pending)
         db.commit()
+
+    return result_payload
+
+async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate_type: str, device_id: str, direction: str):
+    # Delegate to the unified process_rfid_swipe function to avoid code duplication
+    await process_rfid_swipe(
+        db=db,
+        uid=uid_norm,
+        device_id=device_id,
+        direction_hint=direction,
+        gate_id=gate_type,
+        is_http=False
+    )
 
 async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
     """
@@ -625,151 +843,7 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
             uid = payload.get("uid", "")
             direction_hint = payload.get("direction", "in")
             gate_id = payload.get("gate_id", "gate_in")
-            
-            uid_norm = uid.strip().upper().replace(" ", "").replace(":", "")
-            if not uid_norm:
-                return
-
-            # Tự động import thẻ nếu trong whitelist cấu hình
-            card = get_rfid_card(db, uid_norm)
-            if not card:
-                whitelist_raw = get_config_text(db, "rfid_uid_whitelist", "")
-                whitelist = {
-                    item.strip().upper().replace(" ", "")
-                    for item in whitelist_raw.split(",")
-                    if item.strip()
-                }
-                if uid_norm in whitelist:
-                    card = models.RFIDCard(
-                        card_uid=uid_norm,
-                        card_type="guest",
-                        is_active=True,
-                    )
-                    db.add(card)
-                    db.commit()
-                    db.refresh(card)
-
-            # Xác định hướng logic dựa trên session mở trong DB
-            open_session = (
-                db.query(models.ParkingSession)
-                .filter(
-                    models.ParkingSession.rfid_tag == uid_norm,
-                    models.ParkingSession.time_out.is_(None),
-                )
-                .order_by(models.ParkingSession.time_in.desc())
-                .first()
-            )
-            
-            # Thẻ tháng dự phòng
-            if not open_session and card and card.card_type == "monthly" and card.vehicle:
-                registered_plate = ai_service.normalize_plate(card.vehicle.plate_number)
-                open_session = (
-                    db.query(models.ParkingSession)
-                    .filter(
-                        models.ParkingSession.plate_number == registered_plate,
-                        models.ParkingSession.time_out.is_(None),
-                    )
-                    .order_by(models.ParkingSession.time_in.desc())
-                    .first()
-                )
-
-            logical_direction = "out" if open_session else "in"
-
-            # Xác định cổng thực tế
-            pending_entry = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "entry").first()
-            pending_exit = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").first()
-            
-            now_dt = get_vietnam_now()
-            EXPIRE_SECONDS = 45
-            
-            active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
-            active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
-
-            resolved_gate_type = None
-            if active_entry and not active_exit:
-                resolved_gate_type = "entry"
-            elif active_exit and not active_entry:
-                resolved_gate_type = "exit"
-            elif active_entry and active_exit:
-                resolved_gate_type = "entry" if logical_direction == "in" else "exit"
-            else:
-                resolved_gate_type = "entry" if direction_hint == "in" else "exit"
-
-            direction = "in" if resolved_gate_type == "entry" else "out"
-            gate_type = resolved_gate_type
-            
-            pending = active_entry if gate_type == "entry" else active_exit
-
-            if not pending and gate_type == "entry" and card and card.status == "in_use":
-                await notify_clients("parking_update", {
-                    "action": "ignore",
-                    "gate_type": "entry",
-                    "plate": "UNKNOWN",
-                    "rfid_tag": uid_norm,
-                    "confidence": 0.0,
-                    "matched": False,
-                    "message": "Thẻ RFID đang được sử dụng bởi xe khác",
-                })
-                return
-
-            # Nếu là cổng ra dự phòng: không có pending scan nhưng thẻ có session mở -> Cho ra luôn
-            if not pending and gate_type == "exit" and open_session:
-                result = await process_gate_scan(
-                    db=db,
-                    image_bytes=None,
-                    filename=None,
-                    gate_type=gate_type,
-                    trigger_type="rfid",
-                    source_id=device_id,
-                    rfid_tag=uid_norm,
-                    override_plate="UNKNOWN",
-                    override_confidence=0.0,
-                    existing_image_path=None,
-                )
-                if result.action == "open":
-                    mqtt_manager.publish_open_gate(device_id, direction)
-                await notify_clients("parking_update", {
-                    "action": result.action,
-                    "gate_type": gate_type,
-                    "plate": result.recognized_plate,
-                    "plate_in": result.plate_in,
-                    "plate_out": result.plate_out,
-                    "session_id": result.session_id,
-                    "rfid_tag": uid_norm,
-                    "confidence": result.confidence,
-                    "duration_minutes": result.duration_minutes,
-                    "fee": result.fee,
-                    "matched": result.matched,
-                    "image_url": result.image_url,
-                    "plate_in_image_url": result.plate_in_image_url,
-                    "message": result.message,
-                })
-                return
-
-            if not pending:
-                await notify_clients("parking_update", {
-                    "action": "ignore",
-                    "gate_type": gate_type,
-                    "plate": "UNKNOWN",
-                    "confidence": 0.0,
-                    "message": "Vui lòng đỗ xe đúng vị trí cảm biến trước khi quẹt thẻ",
-                })
-                return
-
-            # Nếu AI vẫn đang PROCESSING -> Đưa vào hàng chờ quẹt sớm
-            if pending.plate_number == "PROCESSING":
-                logger.info(f"RFID early swipe detected for {gate_type}. Storing in _pending_rfid_scans.")
-                _pending_rfid_scans[gate_type] = (uid_norm, device_id, now_dt)
-                await notify_clients("pending_scan", {
-                    "gate_type": gate_type,
-                    "recognized_plate": "PROCESSING",
-                    "confidence": 0.0,
-                    "message": "Đang nhận dạng biển số, vui lòng giữ nguyên vị trí, cổng sẽ mở tự động..."
-                })
-                return
-
-            # Nếu đã xử lý xong AI, gọi hàm validation bình thường
-            await process_mqtt_rfid_validation(db, pending, uid_norm, gate_type, device_id, direction)
+            await process_rfid_swipe(db, uid, device_id, direction_hint, gate_id, is_http=False)
 
         elif event_type == "fire_alert":
             sensor_value = payload.get("sensor_value", 0)
@@ -952,7 +1026,8 @@ async def bg_process_esp_event(
             })
 
             # Kiểm tra xem có thẻ RFID nào quét sớm đang đợi nhận diện biển số không
-            pending_rfid = _pending_rfid_scans.pop(gate_type, None)
+            async with _rfid_scan_lock:
+                pending_rfid = _pending_rfid_scans.pop(gate_type, None)
             if pending_rfid:
                 uid_norm, device_id, swipe_time = pending_rfid
                 # Chỉ xử lý nếu thời gian quẹt trong vòng 15 giây
