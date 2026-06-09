@@ -106,7 +106,9 @@ void handleRfid() {
 void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
   int fireAnalogValue = analogRead(FIRE_ANALOG_PIN);
-  bool fireDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
+  bool fireDigitalDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
+  bool fireAnalogDetected = (fireAnalogValue >= FIRE_ANALOG_ALERT_THRESHOLD);
+  bool fireDetected = fireDigitalDetected && fireAnalogDetected;
 
   unsigned long now = millis();
   if (now - lastFireTelemetrySentAt >= FIRE_TELEMETRY_INTERVAL_MS) {
@@ -136,7 +138,7 @@ void handleFireSensor() {
 
     // Gửi cảnh báo lên Backend qua MQTT (cooldown 10s)
     if (now - lastFireAlertSentAt > FIRE_ALERT_COOLDOWN_MS) {
-      publishFireAlert(fireValue);
+      publishFireAlert(fireAnalogValue);
       lastFireAlertSentAt = now;
     }
   }

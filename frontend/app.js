@@ -1236,11 +1236,13 @@ function bindGlobalActions() {
 
     document.getElementById("resetFireBtn").addEventListener("click", async () => {
         try {
-            const data = await resetFireAlarm();
-            alert(data.message || "Đã tắt chuông báo động cháy và thiết bị.");
+            await resetFireAlarm();
+            fireOverlayDismissedForActive = false;
+            await fetchFireAlerts();
         } catch (err) {
             console.error(err);
-            alert("Lỗi: " + (err.message || "Không thể gửi lệnh tắt báo động"));
+            const statusText = document.getElementById("fireStatusText");
+            if (statusText) statusText.textContent = err.message || "Không thể gửi lệnh tắt báo động";
         }
     });
 
@@ -1250,11 +1252,13 @@ function bindGlobalActions() {
             try {
                 fireOverlayResetBtn.disabled = true;
                 fireOverlayResetBtn.classList.add("opacity-70");
-                const data = await resetFireAlarm();
-                alert(data.message || "Đã reset báo cháy.");
+                await resetFireAlarm();
+                fireOverlayDismissedForActive = false;
+                await fetchFireAlerts();
             } catch (err) {
                 console.error(err);
-                alert("Lỗi: " + (err.message || "Không thể reset báo cháy"));
+                const overlayMessage = document.getElementById("fireOverlayMessage");
+                if (overlayMessage) overlayMessage.textContent = err.message || "Không thể reset báo cháy";
             } finally {
                 fireOverlayResetBtn.disabled = false;
                 fireOverlayResetBtn.classList.remove("opacity-70");
