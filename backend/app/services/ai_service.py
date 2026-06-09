@@ -77,23 +77,58 @@ def _looks_like_plate_prefix(text: str) -> bool:
     return bool(re.search(r"[A-Z]", normalized)) and any(ch.isdigit() for ch in normalized)
 
 
+def _compose_plate_fragments(texts: List[str]) -> str:
+    fragments = [normalize_plate(text) for text in texts if normalize_plate(text)]
+    if not fragments:
+        return ""
+    if len(fragments) == 1:
+        return fragments[0]
+
+    prefix_items = []
+    body_items = []
+    other_items = []
+    for index, fragment in enumerate(fragments):
+        has_letter = any(ch.isalpha() for ch in fragment)
+        has_digit = any(ch.isdigit() for ch in fragment)
+        if has_letter and has_digit:
+            prefix_items.append((index, fragment))
+        elif has_digit:
+            body_items.append((index, fragment))
+        else:
+            other_items.append((index, fragment))
+
+    if prefix_items and body_items:
+        prefix_items.sort(key=lambda item: (len(item[1]) > 5, item[0]))
+        body_items.sort(key=lambda item: item[0])
+        other_items.sort(key=lambda item: item[0])
+        return "".join(
+            [item[1] for item in prefix_items]
+            + [item[1] for item in body_items]
+            + [item[1] for item in other_items]
+        )
+
+    return "".join(fragments)
+
+
 def _order_ocr_lines(items: List[Dict]) -> List[str]:
     with_boxes = [item for item in items if item.get("points") is not None]
     if with_boxes:
-        return [
+        ordered = [
             item["text"]
             for item in sorted(
                 items,
                 key=lambda item: (*_line_position(item.get("points")), item.get("index", 0)),
             )
         ]
+        return [ordered_text for ordered_text in [_compose_plate_fragments(ordered)] if ordered_text]
 
     texts = [item["text"] for item in items]
     if len(texts) == 2:
         first, second = texts
         if _looks_like_plate_prefix(second) and not _looks_like_plate_prefix(first):
             return [second, first]
-    return texts
+    composed = _compose_plate_fragments(texts)
+    return [composed] if composed else []
 
 
 def _crop_by_points(img, points, pad_ratio: float = 0.08):
@@ -315,7 +350,7 @@ def _read_plate_roi(plate_roi) -> Tuple[str, float]:
                     best_ocr_conf = float(score)
 
     ordered_texts = _order_ocr_lines(text_items)
-    return normalize_plate("".join(ordered_texts)), best_ocr_conf
+    return _compose_plate_fragments(ordered_texts), best_ocr_conf
 
 
 def _load_yolo_model() -> None:
