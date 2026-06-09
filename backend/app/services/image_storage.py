@@ -8,9 +8,32 @@ from ..core.time_utils import get_vietnam_now
 
 logger = logging.getLogger("uvicorn")
 
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+BACKEND_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+LEGACY_UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "uploads"))
+BASE_DIR = BACKEND_DIR
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def migrate_legacy_uploads() -> int:
+    """Copy images saved by the split-branch path bug into the served upload dir."""
+    if not os.path.isdir(LEGACY_UPLOAD_DIR) or os.path.abspath(LEGACY_UPLOAD_DIR) == os.path.abspath(UPLOAD_DIR):
+        return 0
+
+    migrated = 0
+    for filename in os.listdir(LEGACY_UPLOAD_DIR):
+        src = os.path.join(LEGACY_UPLOAD_DIR, filename)
+        dst = os.path.join(UPLOAD_DIR, filename)
+        if not os.path.isfile(src) or os.path.exists(dst):
+            continue
+        try:
+            import shutil
+
+            shutil.copy2(src, dst)
+            migrated += 1
+        except Exception:
+            logger.exception("Failed to migrate legacy upload %s", src)
+    return migrated
 
 
 def save_upload_image(image_bytes: bytes, original_name: Optional[str]) -> Optional[str]:

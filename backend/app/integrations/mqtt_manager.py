@@ -81,7 +81,7 @@ class MQTTManager:
 
     async def handle_event(self, device_id: str, event_type: str, payload: dict):
         # Tránh import vòng (circular imports)
-        from .main import handle_mqtt_event
+        from ..main import handle_mqtt_event
         try:
             await handle_mqtt_event(device_id, event_type, payload)
         except Exception as e:

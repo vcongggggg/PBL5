@@ -18,6 +18,7 @@ from .core.security import HTTPException, verify_api_key
 from .services import ai_service
 from .services.config_service import get_system_config_value
 from .services.fire_service import is_fire_alarm_blocking, resolve_open_fire_alerts, set_fire_alarm_active
+from .services.image_storage import UPLOAD_DIR, migrate_legacy_uploads
 from .state import esp32_ip
 from .services.gate_logic import (
     ESP_EVENT_COOLDOWN_SECONDS,
@@ -50,9 +51,10 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="PBL5 Smart Parking API")
 
 # Setup static files directory
-BASE_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+migrated_upload_count = migrate_legacy_uploads()
+if migrated_upload_count:
+    logger.info("Migrated %s legacy upload file(s) into %s", migrated_upload_count, UPLOAD_DIR)
 app.mount("/uploads", StaticFiles(directory=UPLOAD_DIR), name="uploads")
 
 # Add Middlewares
