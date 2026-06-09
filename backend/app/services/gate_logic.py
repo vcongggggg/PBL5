@@ -496,8 +496,8 @@ _esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
 ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
 
 gate_locks = {
-    "in": asyncio.Lock(),
-    "out": asyncio.Lock()
+    "entry": asyncio.Lock(),
+    "exit": asyncio.Lock(),
 }
 PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
@@ -910,7 +910,8 @@ async def bg_process_esp_event(
     image_path = save_upload_image(evidence_image_bytes, f"esp_event_{direction}.jpg")
 
     # 2. Sử dụng lock và kiểm tra token để tránh overwrite race condition và SQLite block
-    async with gate_locks[gate_type]:
+    lock = gate_locks.setdefault(gate_type, asyncio.Lock())
+    async with lock:
         db_session = SessionLocal()
         try:
             # Kiểm tra xem có bị overwrite bởi event mới hơn không
