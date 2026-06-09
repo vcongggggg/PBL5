@@ -284,9 +284,12 @@ def capture_image(gate_type: str):
 
 async def gen_frames(gate_type: str):
     import asyncio
+    from .plate_tracker import plate_tracker
+
     while True:
         frame_bytes = camera_manager.capture(gate_type)
         if frame_bytes:
+            frame_bytes = plate_tracker.annotate_frame(gate_type, frame_bytes)
             yield (b'--frame\r\n'
                    b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
         else:
