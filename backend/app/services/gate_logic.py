@@ -564,17 +564,10 @@ async def process_mqtt_rfid_validation(db: Session, pending, uid_norm: str, gate
         "message": result.message,
     })
 
-    should_delete_pending = (
-        result.action == "open" or 
-        not result.valid_plate or 
-        (result.message and "không hợp lệ" in result.message) or 
-        (result.message and "ảnh mờ" in result.message) or
-        (result.message and "đang được sử dụng" in result.message) or
-        (result.message and "het han" in result.message.lower()) or
-        (result.message and "khong khop" in result.message.lower()) or
-        (result.message and "khong tim thay" in result.message.lower()) or
-        (result.message and "da bi khoa" in result.message.lower())
-    )
+    # Chỉ xóa pending scan khi cổng được mở thành công (action == "open")
+    # Nếu validation thất bại (vd: sai thẻ, hết hạn, biển mờ), giữ lại pending scan 
+    # để người dùng có thể quẹt thẻ lại hoặc quét lại mà không cần lùi xe kích hoạt cảm biến.
+    should_delete_pending = (result.action == "open")
     if should_delete_pending:
         db.delete(pending)
         db.commit()
@@ -934,16 +927,19 @@ async def bg_process_esp_event(
             valid_plate = ai_service.is_valid_vn_plate(recognized_plate)
             threshold = get_system_config_value(db_session, "plate_confidence_threshold", 0.6)
 
-            # Ở làn vào, nếu biển số không hợp lệ/mờ/UNKNOWN -> Không tạo hàng đợi chờ quẹt thẻ, yêu cầu quét lại ngay
+            # Ở làn vào, nếu biển số không hợp lệ/mờ/UNKNOWN -> vẫn giữ pending scan nhưng thông báo lỗi để người dùng biết và quét lại/quẹt thẻ
             if gate_type == "entry" and (not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN"):
-                db_session.delete(pending)
+                msg = "Biển số vào không hợp lệ hoặc ảnh mờ. Vui lòng quét lại hoặc thử quẹt thẻ."
+                
+                # Vẫn lưu pending scan để người dùng có thể kích hoạt từ xa hoặc thử lại
+                pending.plate_number = recognized_plate
+                pending.confidence = confidence
+                pending.image_path = image_path
                 db_session.commit()
                 
-                msg = "Biển số vào không hợp lệ hoặc ảnh mờ. Vui lòng quét lại."
-                await notify_clients("parking_update", {
-                    "action": "ignore",
+                await notify_clients("pending_scan", {
                     "gate_type": "entry",
-                    "plate": recognized_plate or "UNKNOWN",
+                    "recognized_plate": recognized_plate or "UNKNOWN",
                     "confidence": confidence,
                     "image_url": image_url_from_path(image_path),
                     "message": msg,

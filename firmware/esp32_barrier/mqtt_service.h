@@ -6,7 +6,7 @@
 void setupMqtt();
 void loopMqtt();
 void publishCarDetected(const String &direction);
-void publishRfidScan(const String &uid, const String &directionHint);
+bool publishRfidScan(const String &uid, const String &directionHint);
 void publishFireAlert(int sensorValue);
 void publishFireTelemetry(int digitalValue, int analogValue, bool fireDetected, bool fireAlertActive);
 

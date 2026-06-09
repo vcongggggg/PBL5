@@ -282,17 +282,10 @@ async def handle_esp_rfid(
     #    - Biển số không hợp lệ hoặc ảnh mờ
     #    - RFID bị reject (thẻ hết hạn, thẻ đang dùng, biển không khớp...)
     #      → Phải xóa pending scan để không ảnh hưởng xe tiếp theo
-    should_delete_pending = (
-        result.action == "open" or 
-        not result.valid_plate or 
-        (result.message and "không hợp lệ" in result.message) or 
-        (result.message and "ảnh mờ" in result.message) or
-        (result.message and "đang được sử dụng" in result.message) or
-        (result.message and "het han" in result.message.lower()) or
-        (result.message and "khong khop" in result.message.lower()) or
-        (result.message and "khong tim thay" in result.message.lower()) or
-        (result.message and "da bi khoa" in result.message.lower())
-    )
+    # Chỉ xóa pending scan khi cổng được mở thành công (action == "open")
+    # Nếu validation thất bại (vd: sai thẻ, hết hạn, biển mờ), giữ lại pending scan 
+    # để người dùng có thể quẹt thẻ lại hoặc quét lại mà không cần lùi xe kích hoạt cảm biến.
+    should_delete_pending = (result.action == "open")
     if should_delete_pending:
         db.delete(pending)
         db.commit()

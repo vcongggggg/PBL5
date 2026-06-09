@@ -22,6 +22,20 @@ void initRfid() {
 }
 
 String readRfidUid() {
+  // Kiểm tra sức khỏe đầu đọc RFID định kỳ
+  byte version = mfrc522.PCD_ReadRegister(mfrc522.VersionReg);
+  if (version == 0x00 || version == 0xFF) {
+    static unsigned long lastRfidReinit = 0;
+    unsigned long now = millis();
+    if (now - lastRfidReinit > 5000) {
+      lastRfidReinit = now;
+      Serial.println("[RFID] WARNING: RC522 hung or disconnected! Re-initializing...");
+      mfrc522.PCD_Init();
+      delay(50);
+    }
+    return "";
+  }
+
   if (!mfrc522.PICC_IsNewCardPresent()) return "";
   if (!mfrc522.PICC_ReadCardSerial()) return "";
 

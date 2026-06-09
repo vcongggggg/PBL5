@@ -98,17 +98,20 @@ void handleRfid() {
     }
     lastRfidUid = uid;
     lastRfidSentAt = now;
-    buzzerBeep();  // Beep 1 lần ngắn báo đã quẹt thẻ thành công
-    publishRfidScan(uid, lastDirectionHint);
+    if (publishRfidScan(uid, lastDirectionHint)) {
+      buzzerDoubleBeep();  // Beep 2 lần nhanh báo gửi MQTT thành công
+    } else {
+      buzzerLongBeep();    // Beep dài báo lỗi kết nối mạng (MQTT disconnected)
+    }
   }
 }
 
 void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
   int fireAnalogValue = analogRead(FIRE_ANALOG_PIN);
-  bool fireDigitalDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
+  bool fireDigitalDetected = (fireValue == HIGH); // HIGH khi phát hiện lửa (Active High)
   bool fireAnalogDetected = (fireAnalogValue <= FIRE_ANALOG_ALERT_THRESHOLD);
-  bool fireDetected = fireDigitalDetected && fireAnalogDetected;
+  bool fireDetected = fireDigitalDetected || fireAnalogDetected;
 
   unsigned long now = millis();
   if (now - lastFireTelemetrySentAt >= FIRE_TELEMETRY_INTERVAL_MS) {

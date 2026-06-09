@@ -64,7 +64,8 @@ class MQTTManager:
             topic = msg.topic
             payload_str = msg.payload.decode('utf-8')
             payload = json.loads(payload_str)
-            logger.info(f"MQTT received: {topic} -> {payload_str}")
+            if "fire_telemetry" not in topic:
+                logger.info(f"MQTT received: {topic} -> {payload_str}")
 
             parts = topic.split('/')
             if len(parts) >= 5:

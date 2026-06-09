@@ -92,10 +92,10 @@ void publishCarDetected(const String &direction) {
   Serial.printf("[MQTT] Đã gửi sự kiện phát hiện xe cổng (%s)\n", direction.c_str());
 }
 
-void publishRfidScan(const String &uid, const String &directionHint) {
+bool publishRfidScan(const String &uid, const String &directionHint) {
   if (!mqttClient.connected()) {
     Serial.println("[MQTT] Lỗi: Chưa kết nối tới broker. Bỏ qua publish rfid_scan.");
-    return;
+    return false;
   }
   String gateId = (directionHint == "in") ? "gate_in" : "gate_out";
   String body = "{";
@@ -105,8 +105,9 @@ void publishRfidScan(const String &uid, const String &directionHint) {
   body += "\"gate_id\":\"" + gateId + "\"";
   body += "}";
 
-  mqttClient.publish(MQTT_TOPIC_RFID_SCAN, body.c_str(), false);
+  bool success = mqttClient.publish(MQTT_TOPIC_RFID_SCAN, body.c_str(), false);
   Serial.printf("[MQTT] Đã gửi dữ liệu thẻ RFID (UID: %s)\n", uid.c_str());
+  return success;
 }
 
 void publishFireAlert(int sensorValue) {

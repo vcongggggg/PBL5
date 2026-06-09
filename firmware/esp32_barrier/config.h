@@ -42,8 +42,7 @@ static const unsigned long FIRE_ALERT_COOLDOWN_MS = 10000;
 static const unsigned long FIRE_CONFIRM_MS = 1200;
 static const unsigned long FIRE_CLEAR_CONFIRM_MS = 3000;
 static const unsigned long FIRE_TELEMETRY_INTERVAL_MS = 1000;
-static const int FIRE_ANALOG_ALERT_THRESHOLD = 1200;
+static const int FIRE_ANALOG_ALERT_THRESHOLD = 1500;
 static const unsigned long IR_CONFIRM_MS = 300;
 
 #endif
-
