@@ -69,9 +69,13 @@ app.add_middleware(
 def startup_event():
     # Khởi tạo MQTT client chạy ngầm (nếu có mqtt_manager)
     loop = asyncio.get_running_loop()
-    mqtt_host = os.environ.get("MQTT_BROKER", "localhost")
+    mqtt_host = (
+        os.environ.get("MQTT_BROKER")
+        or os.environ.get("MQTT_BROKER_HOST")
+        or "broker.hivemq.com"
+    )
     try:
-        mqtt_port = int(os.environ.get("MQTT_PORT", 1883))
+        mqtt_port = int(os.environ.get("MQTT_PORT") or os.environ.get("MQTT_BROKER_PORT") or 1883)
     except ValueError:
         mqtt_port = 1883
         

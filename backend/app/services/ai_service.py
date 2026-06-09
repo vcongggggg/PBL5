@@ -324,8 +324,12 @@ def _load_yolo_model() -> None:
     if _yolo_model is None:
         try:
             env_model_path = os.getenv("PLATE_MODEL_PATH", "").strip()
-            base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-            default_model_path = os.path.join(base_dir, "best.pt")
+            backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+            repo_dir = os.path.abspath(os.path.join(backend_dir, ".."))
+            default_model_path = os.path.join(repo_dir, "best.pt")
+            legacy_model_path = os.path.join(backend_dir, "best.pt")
+            if not os.path.isfile(default_model_path) and os.path.isfile(legacy_model_path):
+                default_model_path = legacy_model_path
             model_path = env_model_path or default_model_path
             _yolo_model = YOLO(model_path)
             logger.info("Loaded YOLO plate model from %s", model_path)
