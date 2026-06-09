@@ -107,7 +107,7 @@ void handleFireSensor() {
   int fireValue = digitalRead(FIRE_SENSOR_PIN);
   int fireAnalogValue = analogRead(FIRE_ANALOG_PIN);
   bool fireDigitalDetected = (fireValue == LOW); // LOW khi phát hiện lửa (Active Low)
-  bool fireAnalogDetected = (fireAnalogValue >= FIRE_ANALOG_ALERT_THRESHOLD);
+  bool fireAnalogDetected = (fireAnalogValue <= FIRE_ANALOG_ALERT_THRESHOLD);
   bool fireDetected = fireDigitalDetected && fireAnalogDetected;
 
   unsigned long now = millis();

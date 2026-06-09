@@ -152,7 +152,8 @@ function pushFireTelemetryPoint(point) {
     const latest = document.getElementById("fireTelemetryLatest");
     if (latest) {
         const digitalText = Number(point.digital_value) === 0 ? "DO: phát hiện" : "DO: bình thường";
-        latest.textContent = `A0: ${value} / 4095 · ${digitalText}`;
+        const analogText = value <= 1200 ? "A0: nguy cơ lửa" : "A0: bình thường";
+        latest.textContent = `A0: ${value} / 4095 · ${analogText} · ${digitalText}`;
     }
 }
 
