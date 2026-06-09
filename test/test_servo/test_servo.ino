@@ -27,13 +27,13 @@ void setup() {
 }
 
 void loop() {
-  Serial.println("Close: 0 deg");
-  servoIn.write(0);
-  servoOut.write(0);
+  Serial.println("Close: 90 deg");
+  servoIn.write(90);
+  servoOut.write(90);
   delay(1500);
 
-  Serial.println("Open: 80 deg");
-  servoIn.write(80);
-  servoOut.write(80);
+  Serial.println("Open: 0 deg");
+  servoIn.write(0);
+  servoOut.write(0);
   delay(1500);
 }

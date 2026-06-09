@@ -44,7 +44,7 @@ Neu LCD khong hien, sua dia chi trong sketch:
 - Noi: signal -> GPIO14.
 - Nguon servo 5V rieng khuyen nghi, va noi chung GND voi ESP32.
 - Nap `test_servo.ino`.
-- Servo quay qua lai goc 0 <-> 80.
+- Servo quay qua lai goc dong 90 <-> mo 0.
 
 ## Sau khi test xong
 

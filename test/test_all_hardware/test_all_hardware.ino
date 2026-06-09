@@ -13,6 +13,8 @@
 #define BUZZER_PIN      32
 #define RFID_SS_PIN     5
 #define RFID_RST_PIN    22
+#define ANGLE_CLOSED    90
+#define ANGLE_OPEN      0
 
 Servo servoIn;
 Servo servoOut;
@@ -44,8 +46,8 @@ void setup() {
   servoOut.setPeriodHertz(50);
   servoIn.attach(SERVO_IN_PIN, 500, 2400);
   servoOut.attach(SERVO_OUT_PIN, 500, 2400);
-  servoIn.write(0);
-  servoOut.write(0);
+  servoIn.write(ANGLE_CLOSED);
+  servoOut.write(ANGLE_CLOSED);
 
   SPI.begin();
   rfid.PCD_Init();
@@ -53,12 +55,12 @@ void setup() {
   Serial.println("=== PBL5 ALL HARDWARE TEST ===");
   Serial.println("IR: LOW=blocked. Fire: LOW=fire. RFID: show UID.");
   Serial.println("Servo quick self-test...");
-  servoIn.write(80);
-  servoOut.write(80);
+  servoIn.write(ANGLE_OPEN);
+  servoOut.write(ANGLE_OPEN);
   beep(150);
   delay(1000);
-  servoIn.write(0);
-  servoOut.write(0);
+  servoIn.write(ANGLE_CLOSED);
+  servoOut.write(ANGLE_CLOSED);
   delay(500);
 
   byte version = rfid.PCD_ReadRegister(rfid.VersionReg);
@@ -102,15 +104,15 @@ void loop() {
   }
 
   if (irInBlocked) {
-    servoIn.write(80);
+    servoIn.write(ANGLE_OPEN);
   } else {
-    servoIn.write(0);
+    servoIn.write(ANGLE_CLOSED);
   }
 
   if (irOutBlocked) {
-    servoOut.write(80);
+    servoOut.write(ANGLE_OPEN);
   } else {
-    servoOut.write(0);
+    servoOut.write(ANGLE_CLOSED);
   }
 
   digitalWrite(BUZZER_PIN, fireDetected ? HIGH : LOW);

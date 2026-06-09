@@ -34,8 +34,8 @@
 #define RFID_RST_PIN    22
 
 // ================== BEHAVIOR ==================
-#define ANGLE_CLOSED    0
-#define ANGLE_OPEN      80
+#define ANGLE_CLOSED    90
+#define ANGLE_OPEN      0
 #define AUTO_CLOSE_MS   8000
 #define FIRE_COOLDOWN_MS 10000
 

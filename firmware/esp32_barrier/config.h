@@ -33,8 +33,8 @@ static const int RFID_RST_PIN = 22;
 static const int BUZZER_PIN = 32;
 
 // ================== BEHAVIOR ==================
-static const int ANGLE_CLOSED = 0;
-static const int ANGLE_OPEN = 80;
+static const int ANGLE_CLOSED = 90;
+static const int ANGLE_OPEN = 0;
 static const unsigned long AUTO_CLOSE_MS = 5000;
 static const unsigned long FIRE_ALERT_COOLDOWN_MS = 10000;
 static const unsigned long FIRE_CONFIRM_MS = 1200;
