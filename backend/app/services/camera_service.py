@@ -117,6 +117,7 @@ class CameraManager:
                 cls._instance.last_frames = {}    # {"entry": (timestamp, bytes), "exit": (timestamp, bytes)}
                 cls._instance.capture_locks = {}  # {"entry": Lock, "exit": Lock}
                 cls._instance.failed_cameras = {} # {"entry": last_fail_time, "exit": last_fail_time}
+                cls._instance.retry_delays = {}   # {"entry": current_delay_seconds, "exit": current_delay_seconds}
                 cls._instance.is_running = True
                 cls._instance.threads = {}        # {"entry": Thread, "exit": Thread}
                 cls._instance.thread_locks = threading.Lock()
@@ -201,10 +202,15 @@ class CameraManager:
 
     def _camera_loop(self, gate_type):
         logger.info(f"Camera background loop bat dau cho lan {gate_type}")
+        BACKOFF_INITIAL = 2.0
+        BACKOFF_MAX = 60.0
         while self.is_running:
             cap = self.get_camera(gate_type)
             if cap is None:
-                time.sleep(2.0)
+                # Exponential backoff khi không tìm được camera
+                delay = self.retry_delays.get(gate_type, BACKOFF_INITIAL)
+                time.sleep(delay)
+                self.retry_delays[gate_type] = min(delay * 2, BACKOFF_MAX)
                 continue
             
             try:
@@ -221,8 +227,13 @@ class CameraManager:
                     # Khi mất kết nối hoặc lỗi đọc, tự động quét lại cổng USB để cập nhật chỉ số mới
                     auto_detect_camera_indices()
                     self.failed_cameras[gate_type] = time.time()
-                    time.sleep(2.0)
+                    delay = self.retry_delays.get(gate_type, BACKOFF_INITIAL)
+                    time.sleep(delay)
+                    self.retry_delays[gate_type] = min(delay * 2, BACKOFF_MAX)
                     continue
+
+                # Camera hoạt động bình thường → reset backoff
+                self.retry_delays[gate_type] = BACKOFF_INITIAL
 
                 _, buffer = cv2.imencode('.jpg', frame)
                 frame_bytes = buffer.tobytes()
@@ -233,7 +244,9 @@ class CameraManager:
                 time.sleep(0.04)  # ~25 FPS
             except Exception as e:
                 logger.error(f"Loi trong camera loop {gate_type}: {e}")
-                time.sleep(2.0)
+                delay = self.retry_delays.get(gate_type, BACKOFF_INITIAL)
+                time.sleep(delay)
+                self.retry_delays[gate_type] = min(delay * 2, BACKOFF_MAX)
 
     def capture(self, gate_type: str):
         if not self.is_running:

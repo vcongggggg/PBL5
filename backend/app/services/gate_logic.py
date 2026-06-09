@@ -492,10 +492,6 @@ async def process_gate_scan(
     )
 
 
-# Cooldown: tránh xử lý event trùng lặp từ cảm biến IR
-_esp_event_cooldown = {}  # {"in": timestamp, "out": timestamp}
-ESP_EVENT_COOLDOWN_SECONDS = 2  # Bỏ qua event cùng hướng trong 2 giây
-
 gate_locks = {
     "entry": asyncio.Lock(),
     "exit": asyncio.Lock(),
@@ -504,14 +500,8 @@ PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
 _manual_gate_open_until = {"entry": 0.0, "exit": 0.0}
 
-MSG_RFID_ONLY_EXIT = "Camera không đọc được biển số, hệ thống cho ra theo RFID dự phòng."
-MSG_RFID_ONLY_EXIT_DISABLED = "Camera không đọc được biển số. Chế độ cho ra dự phòng bằng RFID đang tắt."
 FIRE_GATE_OPEN_COOLDOWN_SECONDS = 30.0
 _last_fire_gate_open_at = 0.0
-
-# Hàng đợi tạm thời chứa các thẻ RFID quét trước khi AI nhận dạng biển số xong
-# Định dạng: { gate_type: (uid_norm, device_id, swipe_time) }
-_pending_rfid_scans = {}
 
 def handle_critical_fire_gate_open() -> bool:
     global _last_fire_gate_open_at

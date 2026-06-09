@@ -21,11 +21,14 @@ class ConnectionManager:
     async def broadcast(self, message: dict):
         from fastapi.encoders import jsonable_encoder
 
+        dead_connections = []
         for connection in self.active_connections:
             try:
                 await connection.send_text(json.dumps(jsonable_encoder(message)))
             except Exception:
-                pass
+                dead_connections.append(connection)
+        for dead in dead_connections:
+            self.disconnect(dead)
 
 
 manager = ConnectionManager()
