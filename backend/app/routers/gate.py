@@ -21,7 +21,7 @@ from ..services import camera_service
 from ..services.gate_logic import bg_process_esp_event
 from ..services.parking_service import create_manual_gate_log
 from ..services.realtime import notify_clients
-MSG_GATE_OPEN_WAIT = "Cổng {gate_type} đang được mở thủ công. Vui lòng đợi thêm {remaining}s."
+MSG_GATE_OPEN_WAIT = "Cổng {gate_type} đang mở thủ công. Vui lòng đợi thêm {remaining}s."
 MSG_MANUAL_OPEN_MQTT = "Đã gửi lệnh mở cổng thủ công qua MQTT thành công."
 MSG_MANUAL_OPEN_HTTP = "Đã gửi lệnh mở cổng thủ công qua HTTP dự phòng thành công."
 logger = logging.getLogger(__name__)
