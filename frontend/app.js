@@ -1382,10 +1382,8 @@ function initWebSocket() {
         } else if (payload.event === "fire_alert") {
             fireOverlayDismissedForActive = false;
             fetchFireAlerts();
-            alert("CẢNH BÁO KHẨN CẤP: PHÁT HIỆN SỰ CỐ HOẢ HOẠN TẠI BÃI GỬI XE!");
         } else if (payload.event === "fire_reset") {
             fetchFireAlerts();
-            alert(payload.data?.message || "Báo động sự cố cháy đã được thu hồi.");
         } else if (payload.event === "pending_scan") {
             const d = payload.data || {};
             const gate = d.gate_type === "entry" ? "entry" : "exit";
