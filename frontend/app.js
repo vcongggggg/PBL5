@@ -1221,8 +1221,8 @@ async function fetchRfidVehicleManagement() {
                 ? `#${item.active_session_id} · vào ${formatDateTime(item.active_session_time_in)}`
                 : "Không có phiên mở";
             const latestSessionText = item.latest_session_id
-                ? `Phiên gần nhất #${item.latest_session_id} · ${item.latest_match_status || "-"}`
-                : "Chưa có phiên";
+                ? `Đang gắn phiên #${item.latest_session_id} · ${item.latest_match_status || "-"}`
+                : "Thẻ không gắn với xe trong bãi";
             const buttonClass = item.is_active
                 ? "bg-rose-600 hover:bg-rose-700 text-white"
                 : "bg-emerald-600 hover:bg-emerald-700 text-white";

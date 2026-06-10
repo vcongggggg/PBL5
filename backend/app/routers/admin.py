@@ -450,18 +450,7 @@ def list_rfid_card_management(db: Session = Depends(get_db)):
             .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
             .first()
         )
-        latest_session = (
-            db.query(models.ParkingSession)
-            .filter(
-                (
-                    (models.ParkingSession.rfid_card_id == card.id)
-                    | (models.ParkingSession.rfid_tag == card.card_uid)
-                ),
-            )
-            .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
-            .first()
-        )
-        session = active_session or latest_session
+        session = active_session
         vehicle = card.vehicle or (session.vehicle if session else None)
         owner_name = card.monthly_user.full_name if card.monthly_user else (vehicle.owner_name if vehicle else None)
         owner_phone = card.monthly_user.phone if card.monthly_user else (vehicle.phone if vehicle else None)
@@ -474,19 +463,19 @@ def list_rfid_card_management(db: Session = Depends(get_db)):
             "issued_at": card.issued_at,
             "expired_at": card.expired_at,
             "vehicle_id": vehicle.id if vehicle else None,
-            "plate_number": vehicle.plate_number if vehicle else (session.plate_number if session else None),
+            "plate_number": vehicle.plate_number if card.card_type == "monthly" and vehicle else (session.plate_number if session else None),
             "owner_name": owner_name,
             "owner_phone": owner_phone,
             "active_session_id": active_session.id if active_session else None,
             "active_session_time_in": active_session.time_in if active_session else None,
             "active_session_plate": active_session.plate_number if active_session else None,
-            "latest_session_id": session.id if session else None,
-            "latest_match_status": session.match_status if session else None,
-            "latest_time_in": session.time_in if session else None,
-            "latest_time_out": session.time_out if session else None,
-            "latest_plate_in": session.plate_in if session else None,
-            "latest_plate_out": session.plate_out if session else None,
-            "latest_image_url": image_url_from_path(session.image_path) if session else None,
+            "latest_session_id": active_session.id if active_session else None,
+            "latest_match_status": active_session.match_status if active_session else None,
+            "latest_time_in": active_session.time_in if active_session else None,
+            "latest_time_out": active_session.time_out if active_session else None,
+            "latest_plate_in": active_session.plate_in if active_session else None,
+            "latest_plate_out": active_session.plate_out if active_session else None,
+            "latest_image_url": image_url_from_path(active_session.image_path) if active_session else None,
         })
     return items
 
