@@ -175,6 +175,7 @@ class ParkingHistoryItem(BaseModel):
     duration_minutes: Optional[int] = None
     fee: float
     match_status: Optional[str] = None
+    image_url: Optional[str] = None
 
 
 class PlateRecognitionResult(BaseModel):

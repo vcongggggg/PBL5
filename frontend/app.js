@@ -1082,7 +1082,7 @@ async function fetchParkingHistory() {
 
         if (!rows.length) {
             const tr = document.createElement("tr");
-            tr.innerHTML = `<td colspan="10" class="px-6 py-5 text-center text-xs text-on-surface-variant/70 italic">Chưa ghi nhận sự kiện vào/ra nào hôm nay.</td>`;
+            tr.innerHTML = `<td colspan="11" class="px-6 py-5 text-center text-xs text-on-surface-variant/70 italic">Chưa ghi nhận sự kiện vào/ra nào hôm nay.</td>`;
             tbody.appendChild(tr);
             return;
         }
@@ -1105,6 +1105,7 @@ async function fetchParkingHistory() {
             
             tr.innerHTML = `
                 <td class="px-5 py-4 font-mono font-medium">${row.session_id}</td>
+                <td class="px-5 py-4">${formatRfidPlateImage({ latest_image_url: row.image_url })}</td>
                 <td class="px-5 py-4">${formatCompactPlate(row.plate_number)}</td>
                 <td class="px-5 py-4">${formatTicketType(row.ticket_type)}</td>
                 <td class="px-5 py-4 font-bold text-xs uppercase text-on-surface-variant">${row.gate_type || "-"}</td>

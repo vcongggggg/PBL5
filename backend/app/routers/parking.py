@@ -97,6 +97,7 @@ def list_parking_history(limit: int = 100, db: Session = Depends(get_db)):
                 duration_minutes=duration_minutes,
                 fee=session.fee or 0,
                 match_status=session.match_status,
+                image_url=image_url_from_path(session.image_path),
             )
         )
     return items
