@@ -37,7 +37,7 @@ logger = logging.getLogger(__name__)
 
 
 def _repo_root() -> str:
-    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
 
 def _default_custom_rec_model_dir() -> str:
@@ -203,8 +203,8 @@ class CustomPlateOcrReader:
         args = Namespace(
             rec_model_dir=rec_model_dir,
             rec_char_dict_path=rec_char_dict_path,
-            rec_image_shape=os.getenv("PADDLE_OCR_REC_IMAGE_SHAPE", "3,48,160"),
-            rec_algorithm=os.getenv("PADDLE_OCR_REC_ALGORITHM", "CRNN"),
+            rec_image_shape=os.getenv("PADDLE_OCR_REC_IMAGE_SHAPE", "3,48,320"),
+            rec_algorithm=os.getenv("PADDLE_OCR_REC_ALGORITHM", "SVTR_LCNet"),
             rec_batch_num=int(os.getenv("PADDLE_OCR_REC_BATCH_NUM", "6")),
             max_text_length=int(os.getenv("PADDLE_OCR_MAX_TEXT_LENGTH", "12")),
             use_space_char=False,

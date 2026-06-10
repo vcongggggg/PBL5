@@ -1,4 +1,6 @@
 dataset
+datatest
+ocr_train_work
 venv
 __pycache__/
 uploads/
