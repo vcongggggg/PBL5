@@ -366,7 +366,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.db.refresh(card_b)
         self.assertEqual(card_b.status, "available")
 
-    async def test_10_rfid_only_exit_can_be_disabled(self):
+    async def test_10_unreadable_exit_requires_manual_review_even_with_rfid(self):
         card = models.RFIDCard(card_uid="RFIDC", card_type="guest", status="in_use", is_active=True)
         self.db.add(card)
         self.db.commit()
@@ -384,8 +384,6 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             match_status="pending",
         )
         self.db.add(session)
-        cfg = self.db.query(models.SystemConfig).filter(models.SystemConfig.key == "allow_rfid_only_exit").first()
-        cfg.value = "0"
         self.db.commit()
 
         result = await process_gate_scan(
@@ -400,7 +398,9 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             override_confidence=0.0,
         )
         self.assertEqual(result.action, "ignore")
-        self.assertIn("dự phòng bằng RFID đang tắt", result.message)
+        self.assertIn("Bảo vệ cần xác nhận thủ công", result.message)
+        self.db.refresh(session)
+        self.assertIsNone(session.time_out)
 
 
     def test_11_capacity_status_levels(self):
@@ -585,7 +585,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertIn("rfid khớp", rfid_assisted.message.lower())
 
         card = self.add_guest_card("EXITBLUR", status="in_use")
-        self.add_open_session("51F77777", "EXITBLUR", card)
+        blur_session = self.add_open_session("51F77777", "EXITBLUR", card)
         blurred = await process_gate_scan(
             db=self.db,
             image_bytes=None,
@@ -597,8 +597,10 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
             override_plate="UNKNOWN",
             override_confidence=0.0,
         )
-        self.assertEqual(blurred.action, "open")
-        self.assertIn("rfid dự phòng", blurred.message.lower())
+        self.assertEqual(blurred.action, "ignore")
+        self.assertIn("Bảo vệ cần xác nhận thủ công", blurred.message)
+        self.db.refresh(blur_session)
+        self.assertIsNone(blur_session.time_out)
 
         card = self.add_guest_card("EXITREJECT", status="in_use")
         self.add_open_session("51F12345", "EXITREJECT", card)
@@ -841,6 +843,7 @@ class TestMqttParkingLogic(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(session.match_status, "manual")
         self.assertIsNotNone(session.time_out)
         self.assertEqual(card.status, "available")
+        self.assertFalse(card.is_active)
 
     def test_23_capacity_boundaries_and_dashboard_updates_after_exit(self):
         self.assertEqual(main_module.build_capacity_status(7, 10)["capacity_status"], "near_full")

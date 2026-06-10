@@ -269,11 +269,13 @@ async def force_checkout(
     session.plate_out = plate_norm or session.plate_number
     session.match_status = "manual"
 
-    # Cập nhật trạng thái thẻ RFID thành "available" khi force checkout
+    # Cập nhật trạng thái thẻ RFID thành "available" và vô hiệu hóa nếu báo mất thẻ khi force checkout
     if session.rfid_tag:
         rfid_card_to_release = get_rfid_card(db, session.rfid_tag)
         if rfid_card_to_release:
             rfid_card_to_release.status = "available"
+            if reason == "lost_card":
+                rfid_card_to_release.is_active = False
 
     create_manual_gate_log(
         db,
