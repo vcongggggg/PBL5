@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="vi" class="dark">
 <head>
     <meta charset="utf-8"/>
@@ -146,6 +146,11 @@
             <span class="pf-nav-dot"></span>
             <span class="material-symbols-outlined text-xl" data-icon="group">group</span>
             <span class="text-label-sm font-semibold">Hội Viên Vé Tháng</span>
+        </a>
+        <a class="pf-nav-link flex items-center gap-stack-md text-sidebar-text/60 px-4 py-3 rounded-lg transition-all hover:bg-white/5 hover:text-sidebar-text" href="#">
+            <span class="pf-nav-dot"></span>
+            <span class="material-symbols-outlined text-xl" data-icon="confirmation_number">confirmation_number</span>
+            <span class="text-label-sm font-semibold">Quản Lý Thẻ &amp; Xe</span>
         </a>
         <a class="pf-nav-link flex items-center gap-stack-md text-sidebar-text/60 px-4 py-3 rounded-lg transition-all hover:bg-white/5 hover:text-sidebar-text" href="#">
             <span class="pf-nav-dot"></span>
@@ -544,7 +549,14 @@
                     </div>
                     <div>
                         <label class="block text-[11px] font-bold text-on-surface-variant/80 uppercase tracking-wider mb-1">Mã thẻ RFID liên kết</label>
-                        <input id="monthlyRfid" class="w-full bg-surface border border-border-subtle/60 rounded-lg text-xs px-3 py-2 outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-mono bg-transparent" placeholder="RFID UID (nếu có)" type="text"/>
+                        <div class="flex gap-2">
+                            <input id="monthlyRfid" class="w-full bg-surface border border-border-subtle/60 rounded-lg text-xs px-3 py-2 outline-none focus:ring-1 focus:ring-primary focus:border-primary transition-all font-mono bg-transparent" placeholder="RFID UID (nếu có)" type="text"/>
+                            <button id="monthlyRfidScanBtn" class="shrink-0 inline-flex items-center gap-1 rounded-lg bg-amber-600 px-3 py-2 text-xs font-bold text-white shadow hover:bg-amber-700 transition-all" type="button">
+                                <span class="material-symbols-outlined text-sm">contactless</span>
+                                Quét
+                            </button>
+                        </div>
+                        <p id="monthlyRfidHint" class="mt-1 text-[10px] font-semibold text-on-surface-variant/70">Vào tab này rồi quẹt thẻ trên RC522, UID sẽ tự điền.</p>
                     </div>
                     </div>
                     <div class="pf-form-group space-y-4">
@@ -564,7 +576,7 @@
                     </div>
                     </div>
                     <div class="pt-2">
-                        <button class="w-full bg-primary hover:bg-primary-hover text-white py-2.5 rounded-lg text-xs font-bold shadow-md shadow-primary/10 hover:scale-[1.01] transition-all" type="submit">
+                        <button class="pf-monthly-submit-btn w-full py-2.5 rounded-lg text-xs font-bold hover:scale-[1.01] transition-all" type="submit">
                             XÁC NHẬN ĐĂNG KÝ
                         </button>
                     </div>
@@ -597,6 +609,43 @@
                         </tbody>
                     </table>
                 </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- RFID & Vehicle Management Panel -->
+    <div class="hidden space-y-stack-lg animate-fade-in" id="panel-rfid-vehicles">
+        <div class="bg-surface-card rounded-xl border border-border-subtle shadow-sm overflow-hidden flex flex-col">
+            <div class="px-6 py-4 border-b border-border-subtle/50 flex flex-col md:flex-row md:items-center justify-between gap-3 bg-surface-container-low/20">
+                <div>
+                    <h2 class="text-sm font-extrabold text-on-surface flex items-center gap-2">
+                        <span class="material-symbols-outlined text-primary text-lg">confirmation_number</span>
+                        Quản lý thẻ RFID &amp; xe
+                    </h2>
+                    <p class="text-xs text-on-surface-variant/70 mt-1">Theo dõi thẻ hiện có, xe/phiên đang gắn với thẻ và khóa/mở thẻ khi cần.</p>
+                </div>
+                <button id="refreshRfidCardsBtn" class="bg-primary/10 hover:bg-primary/20 text-primary px-4 py-2 rounded-full text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm">
+                    <span class="material-symbols-outlined text-sm">refresh</span>
+                    Làm mới danh sách
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="pf-table w-full text-left border-collapse">
+                    <thead>
+                        <tr class="bg-surface-container-low text-[10px] font-bold text-on-surface-variant/80 uppercase tracking-wider border-b border-border-subtle/40">
+                            <th class="px-5 py-3.5">RFID</th>
+                            <th class="px-5 py-3.5">Loại thẻ</th>
+                            <th class="px-5 py-3.5">Trạng thái</th>
+                            <th class="px-5 py-3.5">Xe / chủ xe</th>
+                            <th class="px-5 py-3.5">Phiên đang gắn</th>
+                            <th class="px-5 py-3.5">Ảnh biển số</th>
+                            <th class="px-5 py-3.5 text-center">Thao tác</th>
+                        </tr>
+                    </thead>
+                    <tbody id="rfidVehicleTableBody" class="divide-y divide-border-subtle/30 text-xs">
+                        <!-- Populated dynamically -->
+                    </tbody>
+                </table>
             </div>
         </div>
     </div>

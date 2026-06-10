@@ -38,6 +38,11 @@ void mqttCallback(char *topic, byte *payload, unsigned int length) {
   } else if (topicStr.equals(MQTT_TOPIC_COMMAND_RESET_FIRE)) {
     Serial.println("[MQTT] Nhận lệnh tắt báo động cháy (Reset Fire)");
     resetFireAlarmLocal();
+  } else if (topicStr.equals(MQTT_TOPIC_COMMAND_RESET_WIFI)) {
+    Serial.println("[MQTT] Nhận lệnh từ xa: Xóa cấu hình Wi-Fi và khởi động lại...");
+    WiFi.disconnect(true, true);
+    delay(1000);
+    ESP.restart();
   }
 }
 
@@ -56,6 +61,7 @@ void reconnectMqtt() {
       Serial.println("[MQTT] Kết nối thành công!");
       mqttClient.subscribe(MQTT_TOPIC_COMMAND_OPEN);
       mqttClient.subscribe(MQTT_TOPIC_COMMAND_RESET_FIRE);
+      mqttClient.subscribe(MQTT_TOPIC_COMMAND_RESET_WIFI);
     } else {
       Serial.printf("[MQTT] Kết nối thất bại, state=%d. Sẽ thử lại sau 5s.\n", mqttClient.state());
     }

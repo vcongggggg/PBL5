@@ -29,6 +29,54 @@ logger = logging.getLogger(__name__)
 
 MANUAL_GATE_OPEN_SECONDS = 15.0
 
+# Các lý do mở cổng thủ công mà xe thực sự vào bãi → cần tạo phiên
+# open_only: chỉ mở thử, emergency: ưu tiên an toàn, maintenance: kiểm tra thiết bị → KHÔNG tạo phiên
+REASONS_CREATE_SESSION = {"verified_entry", "system_error"}
+
+
+def _create_manual_entry_session(
+    db: Session,
+    plate: str | None,
+    confidence: float | None,
+    image_path: str | None,
+    reason: str,
+) -> int | None:
+    """
+    Tạo ParkingSession khi bảo vệ mở cổng thủ công bên làn vào.
+    Dùng biển số từ PendingScan nếu camera đã chụp, ngược lại ghi 'MANUAL'.
+    """
+    try:
+        from ..services import ai_service
+        plate_text = ai_service.normalize_plate(plate) if plate else "MANUAL"
+        if not plate_text:
+            plate_text = "MANUAL"
+
+        session = models.ParkingSession(
+            plate_number=plate_text,
+            time_in=get_vietnam_now(),
+            time_out=None,
+            fee=0,
+            image_path=image_path,
+            gate_type="entry",
+            trigger_type="manual",
+            plate_in=plate_text,
+            confidence_in=confidence or 0.0,
+            match_status="manual",
+        )
+        db.add(session)
+        db.commit()
+        db.refresh(session)
+        logger.info(
+            "Created manual entry session #%d plate=%s reason=%s",
+            session.id, plate_text, reason,
+        )
+        return session.id
+    except Exception:
+        logger.exception("Failed to create manual entry ParkingSession")
+        db.rollback()
+        return None
+
+
 router = APIRouter()
 
 
@@ -203,18 +251,45 @@ async def force_open_gate(
             "message": message,
         }
 
+    # Lấy dữ liệu PendingScan TRƯỚC KHI xóa (để tạo session cho làn vào)
+    pending_plate = None
+    pending_confidence = None
+    pending_image_path = None
+    try:
+        pending = db.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).first()
+        if pending and pending.plate_number and pending.plate_number != "PROCESSING":
+            pending_plate = pending.plate_number
+            pending_confidence = pending.confidence
+            pending_image_path = pending.image_path
+        # Xóa pending scan
+        db.query(models.PendingScan).filter(models.PendingScan.gate_type == gate_type).delete()
+        db.commit()
+    except Exception as e:
+        logger.error(f"Error clearing pending scan on force open: {e}")
+        db.rollback()
+
     if mqtt_manager.is_connected:
         mqtt_manager.publish_open_gate("esp32-barrier-01", gate)
         _manual_gate_open_until[gate_type] = time_module.time() + manual_gate_open_seconds
         create_manual_gate_log(db, gate_type, "open_manual", reason=reason, operator=operator, source="web_mqtt")
+
+        # Tạo ParkingSession khi mở thủ công làn VÀO (chỉ khi xe thực sự vào bãi)
+        session_id = None
+        if gate_type == "entry" and reason in REASONS_CREATE_SESSION:
+            session_id = _create_manual_entry_session(
+                db, pending_plate, pending_confidence, pending_image_path, reason
+            )
+
         message = MSG_MANUAL_OPEN_MQTT
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
             "reason": reason,
+            "session_id": session_id,
+            "plate": pending_plate or "MANUAL",
             "message": message,
         })
-        return {"status": "ok", "message": message, "reason": reason}
+        return {"status": "ok", "message": message, "reason": reason, "session_id": session_id}
 
     import app.state as state
     if not state.esp32_ip:
@@ -244,14 +319,24 @@ async def force_open_gate(
     if code == 200:
         _manual_gate_open_until[gate_type] = time_module.time() + manual_gate_open_seconds
         create_manual_gate_log(db, gate_type, "open_manual", reason=reason, operator=operator, source="web_http")
+
+        # Tạo ParkingSession khi mở thủ công làn VÀO (chỉ khi xe thực sự vào bãi)
+        session_id = None
+        if gate_type == "entry" and reason in REASONS_CREATE_SESSION:
+            session_id = _create_manual_entry_session(
+                db, pending_plate, pending_confidence, pending_image_path, reason
+            )
+
         message = MSG_MANUAL_OPEN_HTTP.format(gate_type=gate_type)
         await notify_clients("parking_update", {
             "action": "open_manual",
             "gate_type": gate_type,
             "reason": reason,
+            "session_id": session_id,
+            "plate": pending_plate or "MANUAL",
             "message": message,
         })
-        return {"status": "ok", "message": message, "reason": reason}
+        return {"status": "ok", "message": message, "reason": reason, "session_id": session_id}
 
     raise HTTPException(
         status_code=502,

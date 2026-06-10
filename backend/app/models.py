@@ -98,7 +98,7 @@ class ParkingSession(Base):
     rfid_tag = Column(String(100), nullable=True)
     plate_in = Column(String(20), nullable=True)
     plate_out = Column(String(20), nullable=True)
-    match_status = Column(String(20), default="pending")  # pending / matched / mismatch
+    match_status = Column(String(20), default="pending")  # pending / matched / fuzzy_matched / rfid_assisted / manual
     confidence_in = Column(Float, nullable=True)
     confidence_out = Column(Float, nullable=True)
     rfid_card_type = Column(String(20), nullable=True)  # monthly / guest

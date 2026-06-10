@@ -13,6 +13,7 @@ static const char *MQTT_TOPIC_FIRE_ALERT = "parking/device/esp32-barrier-01/even
 static const char *MQTT_TOPIC_FIRE_TELEMETRY = "parking/device/esp32-barrier-01/event/fire_telemetry";
 static const char *MQTT_TOPIC_COMMAND_OPEN = "parking/device/esp32-barrier-01/command/open_gate";
 static const char *MQTT_TOPIC_COMMAND_RESET_FIRE = "parking/device/esp32-barrier-01/command/reset_fire";
+static const char *MQTT_TOPIC_COMMAND_RESET_WIFI = "parking/device/esp32-barrier-01/command/reset_wifi";
 
 // ================== PIN MAP ==================
 // Gate IN

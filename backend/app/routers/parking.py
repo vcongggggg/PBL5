@@ -286,6 +286,12 @@ async def force_checkout(
         source="web",
     )
 
+    # Clear pending scan of exit gate
+    try:
+        db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").delete()
+    except Exception as e:
+        logger.error(f"Error clearing pending scan on force checkout: {e}")
+
     db.commit()
     db.refresh(session)
 

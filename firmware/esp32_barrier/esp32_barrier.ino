@@ -1,5 +1,6 @@
 // ESP32 Parking Barrier Controller (modular structure with MQTT)
 
+#include <WiFi.h>
 #include "config.h"
 #include "gate_controller.h"
 #include "network_service.h"
@@ -11,6 +12,7 @@
 bool irInEventSentWhileBlocked = false;
 bool irOutEventSentWhileBlocked = false;
 bool fireAlertActive = false;
+bool lastFireDetectedState = false;
 unsigned long lastFireAlertSentAt = 0;
 unsigned long fireLowStartedAt = 0;
 unsigned long fireHighStartedAt = 0;
@@ -30,6 +32,7 @@ static const unsigned long RFID_EVENT_COOLDOWN_MS = 3000;
 void resetFireAlarmLocal() {
   Serial.println("[MQTT] Yêu cầu tắt báo động cháy (Reset Fire alarm) thành công.");
   fireAlertActive = false;
+  lastFireDetectedState = false;
   fireLowStartedAt = 0;
   fireHighStartedAt = 0;
   setAlertRelays(false);
@@ -43,6 +46,30 @@ void setupInputPins() {
   pinMode(IR_OUT_PIN, INPUT_PULLUP);
   pinMode(FIRE_SENSOR_PIN, INPUT_PULLUP);
   pinMode(FIRE_ANALOG_PIN, INPUT);
+  pinMode(0, INPUT_PULLUP); // Nút BOOT trên mạch ESP32
+}
+
+void handleWifiResetButton() {
+  static unsigned long pressStartedAt = 0;
+  // Nút BOOT trên ESP32 nối với GPIO 0, nhấn xuống sẽ kéo chân này về LOW
+  if (digitalRead(0) == LOW) {
+    if (pressStartedAt == 0) {
+      pressStartedAt = millis();
+    } else if (millis() - pressStartedAt >= 3000) {
+      // Đã giữ nút BOOT trong 3 giây liên tục
+      Serial.println("[WIFI] Phát hiện giữ nút BOOT 3s. Đang xóa cấu hình Wi-Fi và restart...");
+      // Kêu còi báo hiệu reset thành công
+      buzzerBeep();
+      delay(200);
+      buzzerBeep();
+      delay(500);
+      WiFi.disconnect(true, true);
+      delay(1000);
+      ESP.restart();
+    }
+  } else {
+    pressStartedAt = 0;
+  }
 }
 
 void handleIrSensors() {
@@ -114,9 +141,18 @@ void handleFireSensor() {
   bool fireDetected = fireDigitalDetected || fireAnalogDetected;
 
   unsigned long now = millis();
-  if (now - lastFireTelemetrySentAt >= FIRE_TELEMETRY_INTERVAL_MS) {
+  bool fireStateChanged = (fireDetected != lastFireDetectedState);
+  if (fireStateChanged || now - lastFireTelemetrySentAt >= FIRE_TELEMETRY_INTERVAL_MS) {
+    if (fireStateChanged) {
+      Serial.printf("[FIRE] State changed: DO=%d A0=%d detected=%s active=%s\n",
+                    fireValue,
+                    fireAnalogValue,
+                    fireDetected ? "true" : "false",
+                    fireAlertActive ? "true" : "false");
+    }
     publishFireTelemetry(fireValue, fireAnalogValue, fireDetected, fireAlertActive);
     lastFireTelemetrySentAt = now;
+    lastFireDetectedState = fireDetected;
   }
 
   if (fireDetected) {
@@ -140,7 +176,7 @@ void handleFireSensor() {
     buzzerFireAlarm(true);  // Bật còi báo cháy liên tục
 
     // Gửi cảnh báo lên Backend qua MQTT (cooldown 10s)
-    if (now - lastFireAlertSentAt > FIRE_ALERT_COOLDOWN_MS) {
+    if (lastFireAlertSentAt == 0 || now - lastFireAlertSentAt > FIRE_ALERT_COOLDOWN_MS) {
       publishFireAlert(fireAnalogValue);
       lastFireAlertSentAt = now;
     }
@@ -166,6 +202,7 @@ void setup() {
 void loop() {
   checkWifiReconnect();  // Kiểm tra reconnect Wi-Fi
   loopMqtt();            // Xử lý các gói tin MQTT và giữ kết nối
+  handleWifiResetButton(); // Giữ nút BOOT 3s để reset Wi-Fi
   handleIrSensors();
   handleRfid();
   handleFireSensor();

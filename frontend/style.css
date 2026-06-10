@@ -52,6 +52,23 @@ input:focus, select:focus, textarea:focus {
     box-shadow: 0 0 0 3px rgba(13, 148, 136, 0.2) !important;
 }
 
+.pf-monthly-submit-btn {
+    color: #ffffff;
+    background: linear-gradient(135deg, #0f766e 0%, #0d9488 52%, #115e59 100%);
+    border: 1px solid rgba(15, 118, 110, 0.9);
+    box-shadow: 0 12px 28px rgba(13, 148, 136, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+.pf-monthly-submit-btn:hover {
+    background: linear-gradient(135deg, #115e59 0%, #0f766e 56%, #134e4a 100%);
+    box-shadow: 0 16px 34px rgba(13, 148, 136, 0.34), inset 0 1px 0 rgba(255, 255, 255, 0.22);
+}
+
+html:not(.dark) .pf-monthly-submit-btn {
+    border-color: rgba(17, 94, 89, 0.95);
+    box-shadow: 0 12px 28px rgba(15, 118, 110, 0.28), 0 0 0 1px rgba(255, 255, 255, 0.75) inset;
+}
+
 .dark .bg-surface-card {
     background-image: linear-gradient(180deg, rgba(255, 255, 255, 0.025), rgba(255, 255, 255, 0.006));
 }

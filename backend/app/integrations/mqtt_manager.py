@@ -1,6 +1,7 @@
 import json
 import logging
 import asyncio
+import time
 import paho.mqtt.client as mqtt
 from typing import Optional
 
@@ -14,6 +15,10 @@ class MQTTManager:
         self.broker_port: int = 1883
         self.client_id: str = "fastapi-backend-parking"
         self.is_connected: bool = False
+        self.latest_rfid_scan: Optional[dict] = None
+        self.rfid_registration_mode: bool = False
+        self.rfid_registration_mode_until: float = 0.0
+        self.latest_registration_rfid: Optional[dict] = None
 
     def init_app(self, loop: asyncio.AbstractEventLoop, broker_host: str = "broker.hivemq.com", broker_port: int = 1883):
         self.loop = loop
@@ -71,6 +76,26 @@ class MQTTManager:
             if len(parts) >= 5:
                 device_id = parts[2]
                 event_type = parts[4]
+                if event_type == "rfid_scan":
+                    uid = str(payload.get("uid") or "").strip().upper().replace(" ", "").replace(":", "")
+                    if uid:
+                        scan_data = {
+                            "uid": uid,
+                            "device_id": device_id,
+                            "direction": payload.get("direction"),
+                            "gate_id": payload.get("gate_id"),
+                            "received_at_ts": time.time(),
+                        }
+                        self.latest_rfid_scan = scan_data
+                        if self.is_rfid_registration_mode_active():
+                            self.latest_registration_rfid = scan_data
+                            if self.loop:
+                                asyncio.run_coroutine_threadsafe(
+                                    self.notify_rfid_registration_scan(scan_data),
+                                    self.loop,
+                                )
+                            logger.info(f"RFID registration mode captured UID: {uid}")
+                            return
 
                 # Đẩy luồng bất đồng bộ sang event loop của FastAPI để chạy xử lý logic an toàn
                 if self.loop:
@@ -80,6 +105,28 @@ class MQTTManager:
                     )
         except Exception as e:
             logger.error(f"Error handling MQTT message: {e}")
+
+    async def notify_rfid_registration_scan(self, scan_data: dict):
+        from ..services.realtime import notify_clients
+        await notify_clients("rfid_registration_scan", scan_data)
+
+    def set_rfid_registration_mode(self, enabled: bool):
+        self.rfid_registration_mode = bool(enabled)
+        self.rfid_registration_mode_until = time.time() + 120 if enabled else 0.0
+        if enabled:
+            self.latest_registration_rfid = None
+
+    def is_rfid_registration_mode_active(self) -> bool:
+        if not self.rfid_registration_mode:
+            return False
+        if time.time() <= self.rfid_registration_mode_until:
+            return True
+        self.rfid_registration_mode = False
+        self.rfid_registration_mode_until = 0.0
+        return False
+
+    def get_latest_registration_rfid(self) -> Optional[dict]:
+        return self.latest_registration_rfid.copy() if self.latest_registration_rfid else None
 
     async def handle_event(self, device_id: str, event_type: str, payload: dict):
         # Tránh import vòng (circular imports)

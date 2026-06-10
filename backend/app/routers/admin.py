@@ -5,6 +5,8 @@ from datetime import datetime
 
 from .. import models, schemas
 from ..database import get_db
+from ..integrations.mqtt_manager import mqtt_manager
+from ..services.image_storage import image_url_from_path
 
 from ..services import ai_service
 from ..core.time_utils import get_vietnam_date, get_vietnam_now
@@ -12,6 +14,24 @@ from datetime import time as dt_time
 
 
 router = APIRouter()
+
+
+@router.post("/api/rfid-registration-mode")
+def set_rfid_registration_mode(payload: dict):
+    enabled = bool(payload.get("enabled"))
+    mqtt_manager.set_rfid_registration_mode(enabled)
+    return {
+        "enabled": mqtt_manager.is_rfid_registration_mode_active(),
+        "latest": mqtt_manager.get_latest_registration_rfid(),
+    }
+
+
+@router.get("/api/rfid-registration-mode")
+def get_rfid_registration_mode():
+    return {
+        "enabled": mqtt_manager.is_rfid_registration_mode_active(),
+        "latest": mqtt_manager.get_latest_registration_rfid(),
+    }
 
 # ============ CRUD VEHICLE ============
 @router.post("/api/vehicles", response_model=schemas.Vehicle, status_code=status.HTTP_201_CREATED)
@@ -211,15 +231,35 @@ def create_monthly_registration(payload: schemas.MonthlyRegistrationCreate, db: 
             .filter(models.RFIDCard.card_uid == card_uid)
             .first()
         )
-        if existing_card and existing_card.card_type != "monthly":
-            raise HTTPException(status_code=400, detail="RFID nay dang la the guest")
 
         if existing_card:
+            if existing_card.status == "in_use":
+                raise HTTPException(status_code=400, detail="RFID nay dang duoc su dung boi xe dang trong bai")
+            if not existing_card.is_active:
+                raise HTTPException(status_code=400, detail="RFID nay dang bi khoa")
+            if existing_card.card_type == "monthly":
+                active_card_sub = (
+                    db.query(models.Subscription)
+                    .filter(
+                        models.Subscription.monthly_user_id == existing_card.monthly_user_id,
+                        models.Subscription.vehicle_id == existing_card.vehicle_id,
+                        models.Subscription.is_active == True,  # noqa: E712
+                        models.Subscription.end_date >= now_date,
+                    )
+                    .first()
+                )
+                same_owner_vehicle = (
+                    existing_card.monthly_user_id == monthly_user.id
+                    and existing_card.vehicle_id == vehicle.id
+                )
+                if active_card_sub and not same_owner_vehicle:
+                    raise HTTPException(status_code=400, detail="RFID nay dang lien ket voi mot ve thang con hieu luc")
             existing_card.card_type = "monthly"
             existing_card.monthly_user_id = monthly_user.id
             existing_card.vehicle_id = vehicle.id
             existing_card.expired_at = datetime.combine(payload.end_date, dt_time.max)
             existing_card.is_active = active_flag
+            existing_card.status = "available"
             rfid_card = existing_card
         else:
             rfid_card = models.RFIDCard(
@@ -391,6 +431,78 @@ def create_rfid_card(payload: schemas.RFIDCardCreate, db: Session = Depends(get_
 @router.get("/api/rfid-cards", response_model=List[schemas.RFIDCard])
 def list_rfid_cards(db: Session = Depends(get_db)):
     return db.query(models.RFIDCard).order_by(models.RFIDCard.id.desc()).all()
+
+
+@router.get("/api/rfid-card-management")
+def list_rfid_card_management(db: Session = Depends(get_db)):
+    cards = db.query(models.RFIDCard).order_by(models.RFIDCard.id.desc()).all()
+    items = []
+    for card in cards:
+        active_session = (
+            db.query(models.ParkingSession)
+            .filter(
+                models.ParkingSession.time_out.is_(None),
+                (
+                    (models.ParkingSession.rfid_card_id == card.id)
+                    | (models.ParkingSession.rfid_tag == card.card_uid)
+                ),
+            )
+            .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
+            .first()
+        )
+        latest_session = (
+            db.query(models.ParkingSession)
+            .filter(
+                (
+                    (models.ParkingSession.rfid_card_id == card.id)
+                    | (models.ParkingSession.rfid_tag == card.card_uid)
+                ),
+            )
+            .order_by(models.ParkingSession.time_in.desc(), models.ParkingSession.id.desc())
+            .first()
+        )
+        session = active_session or latest_session
+        vehicle = card.vehicle or (session.vehicle if session else None)
+        owner_name = card.monthly_user.full_name if card.monthly_user else (vehicle.owner_name if vehicle else None)
+        owner_phone = card.monthly_user.phone if card.monthly_user else (vehicle.phone if vehicle else None)
+        items.append({
+            "id": card.id,
+            "card_uid": card.card_uid,
+            "card_type": card.card_type,
+            "status": card.status,
+            "is_active": card.is_active,
+            "issued_at": card.issued_at,
+            "expired_at": card.expired_at,
+            "vehicle_id": vehicle.id if vehicle else None,
+            "plate_number": vehicle.plate_number if vehicle else (session.plate_number if session else None),
+            "owner_name": owner_name,
+            "owner_phone": owner_phone,
+            "active_session_id": active_session.id if active_session else None,
+            "active_session_time_in": active_session.time_in if active_session else None,
+            "active_session_plate": active_session.plate_number if active_session else None,
+            "latest_session_id": session.id if session else None,
+            "latest_match_status": session.match_status if session else None,
+            "latest_time_in": session.time_in if session else None,
+            "latest_time_out": session.time_out if session else None,
+            "latest_plate_in": session.plate_in if session else None,
+            "latest_plate_out": session.plate_out if session else None,
+            "latest_image_url": image_url_from_path(session.image_path) if session else None,
+        })
+    return items
+
+
+@router.patch("/api/rfid-cards/{card_id}/active")
+def set_rfid_card_active(card_id: int, payload: dict, db: Session = Depends(get_db)):
+    card = db.query(models.RFIDCard).get(card_id)
+    if not card:
+        raise HTTPException(status_code=404, detail="Khong tim thay the RFID")
+    enabled = bool(payload.get("is_active"))
+    if not enabled and card.status == "in_use":
+        raise HTTPException(status_code=400, detail="Khong the khoa the dang duoc su dung trong bai")
+    card.is_active = enabled
+    db.commit()
+    db.refresh(card)
+    return {"status": "ok", "id": card.id, "card_uid": card.card_uid, "is_active": card.is_active}
 
 
 

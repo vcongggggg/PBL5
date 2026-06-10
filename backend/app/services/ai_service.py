@@ -40,6 +40,37 @@ def _repo_root() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 
 
+def _resolve_path(p: str) -> str:
+    if not p:
+        return p
+    if os.path.isabs(p):
+        return p
+    
+    # Try resolving relative to current working directory
+    if os.path.exists(p):
+        return os.path.abspath(p)
+        
+    # Try resolving relative to actual repository root (parent of _repo_root())
+    repo_root = os.path.abspath(os.path.join(_repo_root(), ".."))
+    path_from_repo = os.path.join(repo_root, p)
+    if os.path.exists(path_from_repo):
+        return path_from_repo
+        
+    # Try resolving relative to the backend directory
+    path_from_backend = os.path.join(_repo_root(), p)
+    if os.path.exists(path_from_backend):
+        return path_from_backend
+        
+    # If path starts with backend/ but we are already in backend/, try striping the prefix
+    if p.startswith("backend/"):
+        short_path = p[len("backend/"):]
+        path_from_backend_short = os.path.join(_repo_root(), short_path)
+        if os.path.exists(path_from_backend_short):
+            return path_from_backend_short
+            
+    return os.path.abspath(p)
+
+
 def _default_custom_rec_model_dir() -> str:
     return os.path.join(_repo_root(), "backend", "models", "paddleocr_vn_plate_rec")
 
@@ -317,7 +348,8 @@ def is_valid_vn_plate(text: str) -> bool:
     return has_digit and len(compact) >= 5
 
 
-def _read_plate_roi(plate_roi) -> Tuple[str, float]:
+def _ocr_single_roi(plate_roi) -> Tuple[str, float]:
+    """Run OCR on a single plate ROI image (no rotation logic)."""
     if _ocr_reader is None:
         return "", 0.0
 
@@ -351,6 +383,51 @@ def _read_plate_roi(plate_roi) -> Tuple[str, float]:
 
     ordered_texts = _order_ocr_lines(text_items)
     return _compose_plate_fragments(ordered_texts), best_ocr_conf
+
+
+_FLIP_CHARS = str.maketrans("69", "96")
+
+
+def _try_unflip_plate(text: str) -> str:
+    """
+    Nếu OCR đọc ngược thứ tự ký tự (lật 180°), thử đảo chuỗi lại
+    và hoán đổi các ký tự dễ bị lật (6↔9).
+    Trả về chuỗi đảo nếu nó hợp lệ, ngược lại trả về chuỗi gốc.
+    """
+    if not text:
+        return text
+    reversed_text = text[::-1].translate(_FLIP_CHARS)
+    if is_valid_vn_plate(reversed_text) and not is_valid_vn_plate(text):
+        return reversed_text
+    return text
+
+
+def _read_plate_roi(plate_roi) -> Tuple[str, float]:
+    """
+    Read plate text from ROI.
+
+    After OCR, if the result is not a valid VN plate, try reversing the
+    text (and swapping 6↔9) to handle the PaddleOCR quirk of sometimes
+    reading characters in reverse order.
+    """
+    plate, conf = _ocr_single_roi(plate_roi)
+    if not plate:
+        return plate, conf
+
+    normalized = normalize_plate(plate)
+    if is_valid_vn_plate(normalized):
+        return plate, conf
+
+    # OCR text invalid → try un-flipping (reverse + swap 6↔9)
+    unflipped = _try_unflip_plate(normalized)
+    if unflipped != normalized and is_valid_vn_plate(unflipped):
+        logger.info(
+            "Detected flipped plate text: OCR read '%s' → corrected to '%s'",
+            normalized, unflipped,
+        )
+        return unflipped, conf
+
+    return plate, conf
 
 
 def _load_yolo_model() -> None:
@@ -391,11 +468,19 @@ def _load_ocr_reader() -> None:
                     rec_model_dir = default_rec_model_dir
 
             if rec_model_dir:
+                resolved_rec_model_dir = _resolve_path(rec_model_dir)
+                resolved_char_dict = _resolve_path(
+                    os.getenv("PADDLE_OCR_REC_CHAR_DICT_PATH", "").strip()
+                    or _default_custom_rec_dict_path()
+                )
+                resolved_repo = _resolve_path(
+                    os.getenv("PADDLEOCR_REPO", "").strip() or _default_paddleocr_repo()
+                )
+                
                 _ocr_reader = CustomPlateOcrReader(
-                    rec_model_dir=rec_model_dir,
-                    rec_char_dict_path=os.getenv("PADDLE_OCR_REC_CHAR_DICT_PATH", "").strip()
-                    or _default_custom_rec_dict_path(),
-                    paddleocr_repo=os.getenv("PADDLEOCR_REPO", "").strip() or _default_paddleocr_repo(),
+                    rec_model_dir=resolved_rec_model_dir,
+                    rec_char_dict_path=resolved_char_dict,
+                    paddleocr_repo=resolved_repo,
                     use_gpu=_env_bool("PADDLE_OCR_USE_GPU", False),
                 )
             else:

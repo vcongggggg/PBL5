@@ -1,6 +1,6 @@
-const API_BASE = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1")
+﻿const API_BASE = (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || !window.location.hostname)
     ? "http://localhost:8000"
-    : `${window.location.protocol}//${window.location.hostname}:8000`;
+    : `${window.location.protocol === "file:" ? "http:" : window.location.protocol}//${window.location.hostname}:8000`;
 let parkingChart = null;
 let fireTelemetryChart = null;
 let currentFireStatus = { active: false, message: "Hệ thống báo cháy đang bình thường." };
@@ -530,10 +530,10 @@ function askManualOpenReason(gate) {
             ["maintenance", "Bảo trì", "Mở cổng để kiểm tra servo, barrier hoặc cảm biến."],
         ];
         const exitOptions = [
-            ["open_only", "Chỉ mở cổng ra", "Không đóng session, không tính phí."],
-            ["verified_plate", "Biển số đúng, cho xe ra", "Đóng session xe đang hiển thị và mở cổng ra."],
-            ["lost_card", "Mất RFID", "Đóng session, tính phí gửi xe + phí đền bù RFID."],
-            ["system_error", "Lỗi camera/cảm biến làn ra", "Bảo vệ xác nhận thực tế, đóng session và mở cổng ra."],
+            ["open_only", "Chỉ mở cổng ra", "Không đóng phiên, không tính phí."],
+            ["verified_plate", "Biển số đúng, cho xe ra", "Đóng phiên xe đang hiển thị và mở cổng ra."],
+            ["lost_card", "Mất RFID", "Đóng phiên, tính phí gửi xe + phí đền bù RFID."],
+            ["system_error", "Lỗi camera/cảm biến làn ra", "Bảo vệ xác nhận thực tế, đóng phiên và mở cổng ra."],
             ["emergency", "Mở khẩn cấp", "Chỉ mở cổng trong tình huống khẩn cấp."],
             ["maintenance", "Bảo trì", "Mở cổng để kiểm tra thiết bị."],
         ];
@@ -547,7 +547,7 @@ function askManualOpenReason(gate) {
                 <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-teal-50 dark:bg-teal-950/30">
                     <p class="text-[10px] uppercase tracking-[0.14em] text-teal-700 dark:text-teal-300 font-bold">Mở cổng thủ công - ${gate === "exit" ? "Làn ra" : "Làn vào"}</p>
                     <h3 class="text-base font-extrabold mt-1">Chọn mục đích mở cổng</h3>
-                    <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">${gate === "exit" ? "Các mục cho xe ra có thể đóng session, tính phí và ghi log." : "Làn vào không giải phóng xe; chỉ ghi log lý do mở cổng."}</p>
+                    <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">${gate === "exit" ? "Các mục cho xe ra có thể đóng phiên, tính phí và ghi log." : "Làn vào không giải phóng xe; chỉ ghi log lý do mở cổng."}</p>
                 </div>
                 <div class="p-4 grid gap-2">
                     ${options.map(([value, title, desc]) => `
@@ -623,7 +623,7 @@ function showOpenSessionPicker(initialQuery = "") {
             <div class="w-full max-w-2xl bg-white dark:bg-slate-950 border border-teal-500/40 rounded-xl shadow-2xl overflow-hidden text-slate-950 dark:text-white">
                 <div class="px-5 py-4 border-b border-slate-200 dark:border-slate-800 bg-teal-50 dark:bg-teal-950/30">
                     <p class="text-[10px] uppercase tracking-[0.14em] text-teal-700 dark:text-teal-300 font-bold">Tìm xe đang trong bãi</p>
-                    <h3 class="text-base font-extrabold mt-1">Chọn session cần giải phóng</h3>
+                    <h3 class="text-base font-extrabold mt-1">Chọn phiên cần giải phóng</h3>
                     <p class="text-xs text-slate-600 dark:text-slate-300 mt-1">Dùng khi mất RFID hoặc AI đọc sai biển số. Hãy đối chiếu biển/ảnh lúc vào trước khi xác nhận.</p>
                 </div>
                 <div class="p-4">
@@ -651,7 +651,7 @@ function showOpenSessionPicker(initialQuery = "") {
             try {
                 const rows = await searchOpenSessions(query);
                 if (!rows.length) {
-                    resultsEl.innerHTML = `<div class="text-xs text-slate-500 py-3">Không tìm thấy session đang mở phù hợp.</div>`;
+                    resultsEl.innerHTML = `<div class="text-xs text-slate-500 py-3">Không tìm thấy phiên đang mở phù hợp.</div>`;
                     return;
                 }
                 resultsEl.innerHTML = rows.map((row) => `
@@ -712,7 +712,7 @@ async function forceCheckoutFromMonitoring(gate, reason) {
 
     const confirmText = reason === "lost_card"
         ? `Xac nhan giai phong xe ${plate || rfidTag}, tinh phi gui xe + phi den bu mat RFID va mo cong ra?`
-        : `Xac nhan dong session xe ${plate || rfidTag} va mo cong ra?`;
+        : `Xác nhận đóng phiên xe ${plate || rfidTag} và mở cổng ra?`;
     if (!window.confirm(confirmText)) return false;
 
     setStatus(gate, "Dang giai phong xe va tinh phi...", "warn");
@@ -1163,6 +1163,108 @@ async function fetchMonthlyRegistrations() {
     }
 }
 
+function formatRfidCardType(type) {
+    if (type === "monthly") {
+        return `<span class="pf-badge px-2.5 py-1 bg-teal-500/10 text-teal-600 border border-teal-500/20 text-[9px] font-bold uppercase tracking-wider">Vé tháng</span>`;
+    }
+    return `<span class="pf-badge px-2.5 py-1 bg-amber-500/10 text-amber-600 border border-amber-500/20 text-[9px] font-bold uppercase tracking-wider">Vé lượt</span>`;
+}
+
+function formatRfidStatus(item) {
+    if (!item.is_active) {
+        return `<span class="pf-badge px-2.5 py-1 bg-rose-500/10 text-rose-600 border border-rose-500/20 text-[9px] font-bold uppercase tracking-wider">Đã khóa</span>`;
+    }
+    if (item.status === "in_use") {
+        return `<span class="pf-badge px-2.5 py-1 bg-blue-500/10 text-blue-600 border border-blue-500/20 text-[9px] font-bold uppercase tracking-wider">Đang trong bãi</span>`;
+    }
+    return `<span class="pf-badge px-2.5 py-1 bg-emerald-500/10 text-emerald-600 border border-emerald-500/20 text-[9px] font-bold uppercase tracking-wider">Khả dụng</span>`;
+}
+
+function formatRfidPlateImage(item) {
+    if (!item.latest_image_url) {
+        return `<div class="w-32 h-16 rounded-lg bg-surface-container-high/70 border border-border-subtle/60 flex items-center justify-center text-[9px] text-on-surface-variant/60 font-bold">CHƯA CÓ ẢNH</div>`;
+    }
+    return `<img src="${resolveImageUrl(item.latest_image_url)}?t=${Date.now()}" alt="Ảnh biển số" class="w-32 h-16 rounded-lg object-contain bg-black border border-border-subtle/60 shadow-sm" />`;
+}
+
+async function setRfidCardActive(cardId, isActive) {
+    const res = await fetch(`${API_BASE}/api/rfid-cards/${cardId}/active`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ is_active: isActive }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || "Không thể cập nhật trạng thái thẻ");
+    await fetchRfidVehicleManagement();
+}
+
+async function fetchRfidVehicleManagement() {
+    try {
+        const res = await fetch(`${API_BASE}/api/rfid-card-management`);
+        if (!res.ok) throw new Error("rfid management fetch failed");
+        const items = await res.json();
+        const tbody = document.getElementById("rfidVehicleTableBody");
+        if (!tbody) return;
+        tbody.innerHTML = "";
+
+        if (!items.length) {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `<td colspan="7" class="px-6 py-5 text-center text-xs text-on-surface-variant/70 italic">Chưa có thẻ RFID nào trong cơ sở dữ liệu.</td>`;
+            tbody.appendChild(tr);
+            return;
+        }
+
+        items.forEach((item) => {
+            const tr = document.createElement("tr");
+            tr.className = "hover:bg-surface-container-low/40 border-b border-border-subtle/25 transition-colors";
+            const activeSessionText = item.active_session_id
+                ? `#${item.active_session_id} · vào ${formatDateTime(item.active_session_time_in)}`
+                : "Không có phiên mở";
+            const latestSessionText = item.latest_session_id
+                ? `Phiên gần nhất #${item.latest_session_id} · ${item.latest_match_status || "-"}`
+                : "Chưa có phiên";
+            const buttonClass = item.is_active
+                ? "bg-rose-600 hover:bg-rose-700 text-white"
+                : "bg-emerald-600 hover:bg-emerald-700 text-white";
+            const buttonText = item.is_active ? "Vô hiệu hóa" : "Kích hoạt";
+            const nextState = item.is_active ? "false" : "true";
+            const disabled = item.status === "in_use" && item.is_active;
+
+            tr.innerHTML = `
+                <td class="px-5 py-4">
+                    <div class="font-mono font-extrabold text-on-surface">${item.card_uid}</div>
+                    <div class="text-[10px] text-on-surface-variant/60">ID: ${item.id}</div>
+                </td>
+                <td class="px-5 py-4">${formatRfidCardType(item.card_type)}</td>
+                <td class="px-5 py-4">${formatRfidStatus(item)}</td>
+                <td class="px-5 py-4">
+                    <div>${formatCompactPlate(item.plate_number || item.active_session_plate || "")}</div>
+                    <div class="text-[10px] text-on-surface-variant/70 mt-1">${item.owner_name || "Chưa gắn chủ xe"}</div>
+                    <div class="text-[10px] text-on-surface-variant/50">${item.owner_phone || ""}</div>
+                </td>
+                <td class="px-5 py-4">
+                    <div class="font-bold text-on-surface">${activeSessionText}</div>
+                    <div class="text-[10px] text-on-surface-variant/65 mt-1">${latestSessionText}</div>
+                    <div class="text-[10px] text-on-surface-variant/65">Vào: ${item.latest_plate_in || "-"} · Ra: ${item.latest_plate_out || "-"}</div>
+                </td>
+                <td class="px-5 py-4">${formatRfidPlateImage(item)}</td>
+                <td class="px-5 py-4 text-center">
+                    <button data-rfid-card-id="${item.id}" data-rfid-next-active="${nextState}" class="${buttonClass} px-3 py-2 rounded-lg text-[10px] font-bold shadow transition-all disabled:opacity-50 disabled:cursor-not-allowed" ${disabled ? "disabled title='Không khóa thẻ đang dùng trong bãi'" : ""}>
+                        ${buttonText}
+                    </button>
+                </td>
+            `;
+            tbody.appendChild(tr);
+        });
+    } catch (err) {
+        console.error(err);
+        const tbody = document.getElementById("rfidVehicleTableBody");
+        if (tbody) {
+            tbody.innerHTML = `<tr><td colspan="7" class="px-6 py-5 text-center text-xs text-error font-bold">${err.message || "Không tải được dữ liệu RFID"}</td></tr>`;
+        }
+    }
+}
+
 async function createMonthlyRegistration(evt) {
     evt.preventDefault();
 
@@ -1369,6 +1471,7 @@ const panels = {
     'Dashboard': 'panel-dashboard',
     'Giám Sát Trực Tiếp': 'panel-monitoring',
     'Hội Viên Vé Tháng': 'panel-subscribers',
+    'Quản Lý Thẻ & Xe': 'panel-rfid-vehicles',
     'Lịch Sử Vào Ra': 'panel-history'
 };
 
@@ -1411,10 +1514,26 @@ document.getElementById("btnExportCSV").addEventListener("click", () => {
 });
 
 document.getElementById("monthlyForm").addEventListener("submit", createMonthlyRegistration);
+document.getElementById("refreshRfidCardsBtn")?.addEventListener("click", fetchRfidVehicleManagement);
+document.getElementById("rfidVehicleTableBody")?.addEventListener("click", async (event) => {
+    const btn = event.target.closest("button[data-rfid-card-id]");
+    if (!btn) return;
+    const cardId = Number(btn.dataset.rfidCardId);
+    const nextActive = btn.dataset.rfidNextActive === "true";
+    btn.disabled = true;
+    btn.textContent = "Đang xử lý...";
+    try {
+        await setRfidCardActive(cardId, nextActive);
+    } catch (err) {
+        alert(err.message || "Không thể cập nhật thẻ RFID");
+        await fetchRfidVehicleManagement();
+    }
+});
 
 document.getElementById("refreshBtn").addEventListener("click", async () => {
     await fetchDashboard();
     await fetchMonthlyRegistrations();
+    await fetchRfidVehicleManagement();
     await fetchParkingHistory();
     await fetchFireAlerts();
 });
@@ -1429,6 +1548,7 @@ function initWebSocket() {
         if (payload.event === "parking_update") {
             fetchDashboard();
             fetchParkingHistory();
+            fetchRfidVehicleManagement();
             
             const d = payload.data || {};
             const gate = d.gate_type === "entry" ? "entry" : "exit";
@@ -1440,8 +1560,11 @@ function initWebSocket() {
                 }
             }
 
-            if (d.action === "open" || d.action === "open_manual") {
-                setStatus(gate, d.message || "Đã phê duyệt và mở cổng", "ok");
+            if (d.action === "open" || d.action === "open_manual" || d.action === "force_checkout") {
+                const defaultMsg = d.action === "force_checkout"
+                    ? `Đã checkout thủ công xe ${d.plate || ""}. Phí: ${d.fee > 0 ? Number(d.fee).toLocaleString("vi-VN") + "đ" : "Miễn phí"}.`
+                    : "Đã phê duyệt và mở cổng";
+                setStatus(gate, d.message || defaultMsg, "ok");
             } else {
                 setStatus(gate, d.message || "Từ chối và hạ rào barie", "danger");
             }
@@ -1461,7 +1584,7 @@ function initWebSocket() {
                 message: d.message || "Đã phản hồi lệnh",
             });
 
-            if (d.action === "open" || d.action === "open_manual") {
+            if (d.action === "open" || d.action === "open_manual" || d.action === "force_checkout") {
                 if (window._gateClearTimer && window._gateClearTimer[gate]) {
                     clearTimeout(window._gateClearTimer[gate]);
                 }
@@ -1527,6 +1650,7 @@ window.onload = async () => {
     
     await fetchDashboard();
     await fetchMonthlyRegistrations();
+    await fetchRfidVehicleManagement();
     await fetchParkingHistory();
     await fetchFireAlerts();
     await fetchFireTelemetry();
@@ -1535,3 +1659,5 @@ window.onload = async () => {
     statusBarInterval = setInterval(fetchDashboard, 30000);
     fireAlertInterval = setInterval(fetchFireAlerts, 15000);
 };
+
+

@@ -37,8 +37,6 @@ ESP_EVENT_COOLDOWN_SECONDS = 2
 PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
 MSG_EXIT_NEEDS_MANUAL_REVIEW = "Camera không đọc được biển số hoặc ảnh mờ. Bảo vệ cần xác nhận thủ công để cho xe ra."
-MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL = "Biển số ra không khớp trong ngưỡng an toàn. Bảo vệ cần xác nhận thủ công để cho xe ra."
-MSG_EXIT_RFID_ASSISTED = "Biển số ra lệch nhẹ so với biển vào, RFID khớp nên cho phép xe ra."
 _pending_rfid_scans = {}
 _rfid_scan_lock = asyncio.Lock()
 
@@ -240,15 +238,27 @@ async def process_gate_scan(
     # EXIT LOGIC: Tìm phiên theo RFID trước (Luồng: Quẹt thẻ để ra)
     open_session = None
     if rfid_tag:
-        open_session = (
-            db.query(models.ParkingSession)
-            .filter(
-                models.ParkingSession.rfid_tag == rfid_tag,
-                models.ParkingSession.time_out.is_(None),
+        if recognized_plate and recognized_plate != "UNKNOWN":
+            open_session = (
+                db.query(models.ParkingSession)
+                .filter(
+                    models.ParkingSession.rfid_tag == rfid_tag,
+                    models.ParkingSession.plate_number == recognized_plate,
+                    models.ParkingSession.time_out.is_(None),
+                )
+                .order_by(models.ParkingSession.time_in.desc())
+                .first()
             )
-            .order_by(models.ParkingSession.time_in.desc())
-            .first()
-        )
+        if not open_session:
+            open_session = (
+                db.query(models.ParkingSession)
+                .filter(
+                    models.ParkingSession.rfid_tag == rfid_tag,
+                    models.ParkingSession.time_out.is_(None),
+                )
+                .order_by(models.ParkingSession.time_in.desc())
+                .first()
+            )
     
     # Nếu không tìm thấy bằng RFID, thử tìm bằng biển số (Dự phòng)
     if not open_session:
@@ -283,15 +293,28 @@ async def process_gate_scan(
     plate_in_image_url = image_url_from_path(open_session.image_path) if open_session else None
 
     # Calculate Levenshtein distance early if we have a valid open session and some text is read
+    # Also detect flipped plate: if reversing the exit plate (+ swapping 6↔9) gives a
+    # closer match to plate_in, the OCR likely read the plate upside-down.
     plate_distance = 999
     if open_session and recognized_plate and recognized_plate != "UNKNOWN":
-        plate_distance = levenshtein_distance(
-            ai_service.normalize_plate(open_session.plate_number),
-            recognized_plate
-        )
+        plate_in_norm = ai_service.normalize_plate(open_session.plate_number)
+        plate_distance = levenshtein_distance(plate_in_norm, recognized_plate)
+
+        # Try un-flipping: reverse text + swap 6↔9
+        _flip_map = str.maketrans("69", "96")
+        flipped_plate = recognized_plate[::-1].translate(_flip_map)
+        flipped_distance = levenshtein_distance(plate_in_norm, flipped_plate)
+
+        if flipped_distance < plate_distance:
+            logger.info(
+                "EXIT plate flip detected: OCR read '%s' (distance=%d) → corrected to '%s' (distance=%d) based on entry plate '%s'",
+                recognized_plate, plate_distance, flipped_plate, flipped_distance, plate_in_norm,
+            )
+            recognized_plate = flipped_plate
+            plate_distance = flipped_distance
 
     MAX_PLATE_DISTANCE = 1  # Cho phép tối đa sai 1 ký tự
-    MAX_RFID_ASSISTED_DISTANCE = 3
+    MAX_RFID_ASSISTED_DISTANCE = 2  # RFID trợ giúp: tối đa lệch 2 ký tự (lệch ≥3 = xe khác)
     rfid_matches_session = bool(
         trigger_type == "rfid"
         and rfid_card
@@ -343,7 +366,7 @@ async def process_gate_scan(
         if not open_session:
             msg = "Không tìm thấy thông tin xe vào (Thẻ này chưa được dùng)"
         else:
-            msg = f"{MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL} Biển số ra ({recognized_plate}) khác biển lúc vào ({open_session.plate_number}) {plate_distance} ký tự."
+            msg = f"Biển số ra KHÔNG KHỚP — lệch {plate_distance} ký tự (VÀO: {open_session.plate_number}, RA: {recognized_plate}). Bảo vệ cần xác nhận thủ công để cho xe ra."
         
         await notify_clients("parking_update", {
             "action": "ignore",
@@ -398,7 +421,7 @@ async def process_gate_scan(
             message=msg,
         )
     if plate_distance > MAX_PLATE_DISTANCE and not is_rfid_assisted:
-        msg = f"{MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL} Biển số ra ({recognized_plate}) khác biển lúc vào ({open_session.plate_number}) {plate_distance} ký tự."
+        msg = f"Biển số ra KHÔNG KHỚP — lệch {plate_distance} ký tự (VÀO: {open_session.plate_number}, RA: {recognized_plate}). Bảo vệ cần xác nhận thủ công để cho xe ra."
         await notify_clients("parking_update", {
             "action": "ignore",
             "gate_type": "exit",
@@ -478,12 +501,13 @@ async def process_gate_scan(
     db.commit()
     db.refresh(open_session)
 
+    plate_in_display = open_session.plate_in or open_session.plate_number
     if is_rfid_assisted:
-        success_msg = MSG_EXIT_RFID_ASSISTED
+        success_msg = f"Biển số ra lệch {plate_distance} ký tự so với biển vào (VÀO: {plate_in_display}, RA: {recognized_plate}). RFID khớp nên cho phép xe ra."
     elif plate_distance == 0:
-        success_msg = "Biển số ra trùng khớp biển vào, cho phép xe ra"
+        success_msg = f"Biển số ra trùng khớp 100% biển vào ({plate_in_display}), cho phép xe ra"
     else:
-        success_msg = "Biển số ra khớp trong ngưỡng cho phép, cho phép xe ra"
+        success_msg = f"Biển số ra khớp trong ngưỡng cho phép: lệch {plate_distance} ký tự so với biển vào (VÀO: {plate_in_display}, RA: {recognized_plate}), cho phép xe ra"
 
     # Thông báo qua WebSocket
     await notify_clients("parking_update", {
@@ -620,7 +644,7 @@ async def process_rfid_swipe(
     pending_exit = db.query(models.PendingScan).filter(models.PendingScan.gate_type == "exit").first()
     
     now_dt = get_vietnam_now()
-    EXPIRE_SECONDS = 45
+    EXPIRE_SECONDS = 120
     
     active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
     active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
@@ -844,7 +868,6 @@ async def handle_mqtt_event(device_id: str, event_type: str, payload: dict):
             # Kiểm tra cooldown
             last_time = _esp_event_cooldown.get(direction, 0)
             if now - last_time < ESP_EVENT_COOLDOWN_SECONDS:
-                logger.info(f"MQTT IR Event {direction} ignored due to cooldown.")
                 return
 
             _esp_event_cooldown[direction] = now
