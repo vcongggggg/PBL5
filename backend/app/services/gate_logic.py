@@ -318,6 +318,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in": open_session.plate_number if open_session else None,
             "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
@@ -325,6 +326,7 @@ async def process_gate_scan(
             action="ignore",
             gate_type="exit",
             trigger_type=trigger_type,
+            plate_in=open_session.plate_number if open_session else None,
             plate_out="UNKNOWN",
             recognized_plate="UNKNOWN",
             confidence=confidence,
@@ -338,7 +340,11 @@ async def process_gate_scan(
     # 2. Trường hợp đọc được chữ nhưng không hợp lệ (ví dụ bị che mất chữ nên ngắn hơn 7 ký tự)
     # và không có RFID trợ giúp khớp trong khoảng cách cho phép
     if (not valid_plate or confidence < threshold) and not is_rfid_assisted_bypass:
-        msg = MSG_EXIT_NEEDS_MANUAL_REVIEW
+        if not open_session:
+            msg = "Không tìm thấy thông tin xe vào (Thẻ này chưa được dùng)"
+        else:
+            msg = f"{MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL} Biển số ra ({recognized_plate}) khác biển lúc vào ({open_session.plate_number}) {plate_distance} ký tự."
+        
         await notify_clients("parking_update", {
             "action": "ignore",
             "gate_type": "exit",
@@ -346,6 +352,7 @@ async def process_gate_scan(
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
+            "plate_in": open_session.plate_number if open_session else None,
             "plate_in_image_url": plate_in_image_url,
             "message": msg,
         })
@@ -353,6 +360,7 @@ async def process_gate_scan(
             action="ignore",
             gate_type="exit",
             trigger_type=trigger_type,
+            plate_in=open_session.plate_number if open_session else None,
             plate_out=recognized_plate,
             recognized_plate=recognized_plate,
             confidence=confidence,
