@@ -36,8 +36,9 @@ _esp_event_cooldown = {}
 ESP_EVENT_COOLDOWN_SECONDS = 2
 PLATE_SCAN_WINDOW_SECONDS = 3.0
 PLATE_SCAN_INTERVAL_SECONDS = 0.35
-MSG_RFID_ONLY_EXIT = "Camera không đọc được biển số, hệ thống cho ra theo RFID dự phòng."
-MSG_RFID_ONLY_EXIT_DISABLED = "Camera không đọc được biển số. Chế độ cho ra dự phòng bằng RFID đang tắt."
+MSG_EXIT_NEEDS_MANUAL_REVIEW = "Camera không đọc được biển số hoặc ảnh mờ. Bảo vệ cần xác nhận thủ công để cho xe ra."
+MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL = "Biển số ra không khớp trong ngưỡng an toàn. Bảo vệ cần xác nhận thủ công để cho xe ra."
+MSG_EXIT_RFID_ASSISTED = "Biển số ra lệch nhẹ so với biển vào, RFID khớp nên cho phép xe ra."
 _pending_rfid_scans = {}
 _rfid_scan_lock = asyncio.Lock()
 
@@ -274,42 +275,46 @@ async def process_gate_scan(
             .first()
         )
 
-    # Cho phép ra bằng thẻ RFID nếu có phiên mở tương ứng:
-    # - Biển số mờ/UNKNOWN/không hợp lệ nhưng RFID có session mở → cho ra (camera lỗi hoàn toàn)
-    # - Biển số nhận SAI nhưng thẻ RFID khớp session entry VÀ sai lệch ≤ 3 ký tự → cho ra
-    # - Biển số sai > 3 ký tự → từ chối dù RFID đúng (buộc bảo vệ force checkout, phòng gian lận)
-    is_rfid_exit_allowed = False
-    rfid_exit_reason = None
-    allow_rfid_only_exit = get_config_bool(db, "allow_rfid_only_exit", True)
-    if open_session and rfid_tag:
-        if not valid_plate or confidence < threshold or recognized_plate == "UNKNOWN":
-            # Camera hoàn toàn không đọc được biển → ưu tiên RFID
-            if allow_rfid_only_exit:
-                is_rfid_exit_allowed = True
-                rfid_exit_reason = "unreadable"
-                logger.info(f"Cho phép xe ra bằng thẻ RFID mặc dù biển số không hợp lệ/mờ: {recognized_plate}")
-        elif rfid_card and open_session.rfid_card_id and open_session.rfid_card_id == rfid_card.id:
-            # Thẻ RFID khớp chính xác session entry → kiểm tra mức sai lệch biển số
-            rfid_plate_distance = levenshtein_distance(
-                ai_service.normalize_plate(open_session.plate_number),
-                recognized_plate
-            )
-            MAX_RFID_FALLBACK_DISTANCE = 3  # Cho phép sai tối đa 3 ký tự khi RFID đúng
-            if 1 < rfid_plate_distance <= MAX_RFID_FALLBACK_DISTANCE:
-                is_rfid_exit_allowed = True
-                rfid_exit_reason = "rfid_assisted"
-                logger.info(f"Cho phép xe ra: RFID khớp session entry (card_id={rfid_card.id}), biển số sai {rfid_plate_distance} ký tự (≤{MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}")
-            elif rfid_plate_distance > MAX_RFID_FALLBACK_DISTANCE:
-                logger.warning(f"TỪ CHỐI xe ra: RFID đúng nhưng biển số sai quá nhiều ({rfid_plate_distance} ký tự > {MAX_RFID_FALLBACK_DISTANCE}): {recognized_plate} vs {open_session.plate_number}. Yêu cầu bảo vệ force checkout.")
+    # RFID alone is not enough to auto-close an exit session. The system only
+    # opens automatically when the exit plate matches exactly or is within the
+    # strict fuzzy threshold below. Unreadable or mismatched plates require an
+    # operator to choose a manual reason and release the vehicle.
 
     plate_in_image_url = image_url_from_path(open_session.image_path) if open_session else None
 
-    if (not valid_plate or confidence < threshold) and not is_rfid_exit_allowed:
-        msg = MSG_RFID_ONLY_EXIT_DISABLED if open_session and rfid_tag and not allow_rfid_only_exit else "Biển số ra không hợp lệ hoặc ảnh mờ"
+    # Calculate Levenshtein distance early if we have a valid open session and some text is read
+    plate_distance = 999
+    if open_session and recognized_plate and recognized_plate != "UNKNOWN":
+        plate_distance = levenshtein_distance(
+            ai_service.normalize_plate(open_session.plate_number),
+            recognized_plate
+        )
+
+    MAX_PLATE_DISTANCE = 1  # Cho phép tối đa sai 1 ký tự
+    MAX_RFID_ASSISTED_DISTANCE = 3
+    rfid_matches_session = bool(
+        trigger_type == "rfid"
+        and rfid_card
+        and open_session
+        and open_session.rfid_card_id
+        and open_session.rfid_card_id == rfid_card.id
+    )
+    is_rfid_assisted_bypass = bool(
+        rfid_matches_session
+        and plate_distance <= MAX_RFID_ASSISTED_DISTANCE
+    )
+    is_rfid_assisted = bool(
+        rfid_matches_session
+        and MAX_PLATE_DISTANCE < plate_distance <= MAX_RFID_ASSISTED_DISTANCE
+    )
+
+    # 1. Trường hợp không đọc được bất kỳ chữ nào (Ảnh mờ hoàn toàn hoặc UNKNOWN)
+    if not recognized_plate or recognized_plate == "UNKNOWN":
+        msg = MSG_EXIT_NEEDS_MANUAL_REVIEW
         await notify_clients("parking_update", {
             "action": "ignore",
             "gate_type": "exit",
-            "plate": recognized_plate or "UNKNOWN",
+            "plate": "UNKNOWN",
             "rfid_tag": rfid_tag,
             "confidence": confidence,
             "image_url": image_url,
@@ -320,8 +325,36 @@ async def process_gate_scan(
             action="ignore",
             gate_type="exit",
             trigger_type=trigger_type,
-            plate_out=recognized_plate or "UNKNOWN",
-            recognized_plate=recognized_plate or "UNKNOWN",
+            plate_out="UNKNOWN",
+            recognized_plate="UNKNOWN",
+            confidence=confidence,
+            valid_plate=False,
+            matched=False,
+            image_url=image_url,
+            plate_in_image_url=plate_in_image_url,
+            message=msg,
+        )
+
+    # 2. Trường hợp đọc được chữ nhưng không hợp lệ (ví dụ bị che mất chữ nên ngắn hơn 7 ký tự)
+    # và không có RFID trợ giúp khớp trong khoảng cách cho phép
+    if (not valid_plate or confidence < threshold) and not is_rfid_assisted_bypass:
+        msg = MSG_EXIT_NEEDS_MANUAL_REVIEW
+        await notify_clients("parking_update", {
+            "action": "ignore",
+            "gate_type": "exit",
+            "plate": recognized_plate,
+            "rfid_tag": rfid_tag,
+            "confidence": confidence,
+            "image_url": image_url,
+            "plate_in_image_url": plate_in_image_url,
+            "message": msg,
+        })
+        return schemas.GateScanResponse(
+            action="ignore",
+            gate_type="exit",
+            trigger_type=trigger_type,
+            plate_out=recognized_plate,
+            recognized_plate=recognized_plate,
             confidence=confidence,
             valid_plate=valid_plate,
             matched=False,
@@ -356,19 +389,8 @@ async def process_gate_scan(
             plate_in_image_url=plate_in_image_url,
             message=msg,
         )
-
-    # So sánh Biển số ra với Biển số lúc vào
-    if is_rfid_exit_allowed:
-        plate_distance = 0
-    else:
-        plate_distance = levenshtein_distance(
-            ai_service.normalize_plate(open_session.plate_number),
-            recognized_plate
-        )
-        
-    MAX_PLATE_DISTANCE = 1  # Cho phép tối đa sai 1 ký tự
-    if plate_distance > MAX_PLATE_DISTANCE and not is_rfid_exit_allowed:
-        msg = f"Biển số ra ({recognized_plate}) KHÔNG KHỚP với biển lúc vào ({open_session.plate_number})! (sai {plate_distance} ký tự)"
+    if plate_distance > MAX_PLATE_DISTANCE and not is_rfid_assisted:
+        msg = f"{MSG_EXIT_PLATE_MISMATCH_NEEDS_MANUAL} Biển số ra ({recognized_plate}) khác biển lúc vào ({open_session.plate_number}) {plate_distance} ký tự."
         await notify_clients("parking_update", {
             "action": "ignore",
             "gate_type": "exit",
@@ -435,7 +457,10 @@ async def process_gate_scan(
     # KHÔNG ghi đè gate_type, trigger_type, rfid_tag gốc của entry
     open_session.plate_out = recognized_plate
     open_session.confidence_out = confidence
-    open_session.match_status = "rfid_only" if is_rfid_exit_allowed else ("matched" if plate_distance == 0 else "fuzzy_matched")
+    if is_rfid_assisted:
+        open_session.match_status = "rfid_assisted"
+    else:
+        open_session.match_status = "matched" if plate_distance == 0 else "fuzzy_matched"
 
     # Cập nhật trạng thái thẻ RFID thành "available" khi ra thành công
     rfid_card_to_release = rfid_card or get_rfid_card(db, open_session.rfid_tag)
@@ -445,10 +470,8 @@ async def process_gate_scan(
     db.commit()
     db.refresh(open_session)
 
-    if rfid_exit_reason == "unreadable":
-        success_msg = MSG_RFID_ONLY_EXIT
-    elif rfid_exit_reason == "rfid_assisted":
-        success_msg = "Biển số ra lệch nhẹ so với biển vào, RFID khớp nên cho phép xe ra."
+    if is_rfid_assisted:
+        success_msg = MSG_EXIT_RFID_ASSISTED
     elif plate_distance == 0:
         success_msg = "Biển số ra trùng khớp biển vào, cho phép xe ra"
     else:
@@ -594,6 +617,14 @@ async def process_rfid_swipe(
     active_entry = pending_entry if (pending_entry and (now_dt - pending_entry.created_at).total_seconds() <= EXPIRE_SECONDS) else None
     active_exit = pending_exit if (pending_exit and (now_dt - pending_exit.created_at).total_seconds() <= EXPIRE_SECONDS) else None
     
+    direction_hint_norm = (direction_hint or "").strip().lower()
+    gate_id_norm = (gate_id or "").strip().lower()
+    hinted_gate_type = None
+    if direction_hint_norm == "out" or gate_id_norm.endswith("out"):
+        hinted_gate_type = "exit"
+    elif direction_hint_norm == "in" or gate_id_norm.endswith("in"):
+        hinted_gate_type = "entry"
+    
     # Giải quyết hướng thực tế dựa trên các queue có xe đang chờ
     resolved_gate_type = None
     if active_entry and not active_exit:
@@ -601,10 +632,10 @@ async def process_rfid_swipe(
     elif active_exit and not active_entry:
         resolved_gate_type = "exit"
     elif active_entry and active_exit:
-        resolved_gate_type = "entry" if logical_direction == "in" else "exit"
+        resolved_gate_type = hinted_gate_type or ("entry" if logical_direction == "in" else "exit")
     else:
         # Fallback về hướng payload gửi lên hoặc gợi ý
-        resolved_gate_type = "entry" if direction_hint == "in" else "exit"
+        resolved_gate_type = hinted_gate_type or ("entry" if logical_direction == "in" else "exit")
 
     direction = "in" if resolved_gate_type == "entry" else "out"
     gate_type = resolved_gate_type
