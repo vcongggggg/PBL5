@@ -233,7 +233,7 @@ class CustomPlateOcrReader:
             drop_score=0.0,
         )
 
-        self._detector = PaddleOCR(use_textline_orientation=True, lang="en")
+        self._detector = PaddleOCR(use_textline_orientation=False, lang="en")
         self._recognizer = TextRecognizer(args)
         logger.info("Initialized custom PaddleOCR recognizer from %s", rec_model_dir)
 
@@ -399,7 +399,7 @@ def _load_ocr_reader() -> None:
                     use_gpu=_env_bool("PADDLE_OCR_USE_GPU", False),
                 )
             else:
-                _ocr_reader = PaddleOCR(use_textline_orientation=True, lang='en')
+                _ocr_reader = PaddleOCR(use_textline_orientation=False, lang='en')
                 logger.info("Initialized default PaddleOCR successfully")
         except Exception:
             logger.exception("Failed to initialize PaddleOCR")
